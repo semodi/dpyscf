@@ -1,6 +1,6 @@
 import torch
 from torch.nn import Sequential as Seq, Linear, ReLU,Sigmoid,GELU
-from torch_geometric.nn import MessagePassing
+# from torch_geometric.nn import MessagePassing
 import pyscf
 from pyscf import gto,dft,scf
 import torch
@@ -153,18 +153,19 @@ class XC(torch.nn.Module):
                 descr2 = torch.log((2*rho0_b)**(1/3) + self.loge)
             else: 
                 descr1 = torch.log((rho0_a + rho0_b)**(1/3) + self.loge)# rho
-                descr2 = spinscale # zeta
+                descr2 = torch.log(spinscale) # zeta
             descr = torch.cat([descr1.unsqueeze(-1), descr2.unsqueeze(-1)],dim=-1)
         if self.level > 1:
             if spin_scaling:
                 descr3a = torch.sqrt(4*gamma_a)/(2*(3*np.pi**2)**(1/3)*(2*rho0_a)**(4/3)+self.epsilon) # s
                 descr3b = torch.sqrt(4*gamma_b)/(2*(3*np.pi**2)**(1/3)*(2*rho0_b)**(4/3) +self.epsilon) # s
                 descr3 = torch.cat([descr3a.unsqueeze(-1), descr3b.unsqueeze(-1)],dim=-1)
+                descr3 = (1-torch.exp(-descr3**2/self.s_gam))*torch.log(descr3 + 1)
             else:
                 descr3 = torch.sqrt(gamma_a + gamma_b + 2*gamma_ab)/(2*(3*np.pi**2)**(1/3)*(rho0_a + rho0_b)**(4/3)+self.epsilon) # s
                 descr3 = descr3.unsqueeze(-1)
-            descr3 = (1-torch.exp(-descr3**2/self.s_gam))*torch.log(descr3 + 1)
-#             descr3 = torch.log(descr3 + self.loge)
+                descr3 = (1-torch.exp(-descr3**2/self.s_gam))*torch.log(descr3 + 1)
+#                 descr3 = torch.log(descr3 + self.loge)
             descr = torch.cat([descr, descr3],dim=-1)
             
         if self.level == 3:
@@ -458,42 +459,42 @@ class LDA_X(torch.nn.Module):
         return -3/4*(3/np.pi)**(1/3)*rho**(1/3)
 
 
-class EdgeConv(MessagePassing):
-    def __init__(self, in_channels, n_gaussians = 10, r_cut=0.1, n_hidden=12, device='cpu'):
-        super(EdgeConv, self).__init__(aggr='add') 
-        self.mlp = Seq(Linear(10 + n_hidden, 12),
-                       GELU(),
-                       Linear(n_hidden, n_hidden),
-                       GELU(),
-                       Linear(n_hidden, 1)
-                      ).to(device)
+# class EdgeConv(MessagePassing):
+#     def __init__(self, in_channels, n_gaussians = 10, r_cut=0.1, n_hidden=12, device='cpu'):
+#         super(EdgeConv, self).__init__(aggr='add') 
+#         self.mlp = Seq(Linear(10 + n_hidden, 12),
+#                        GELU(),
+#                        Linear(n_hidden, n_hidden),
+#                        GELU(),
+#                        Linear(n_hidden, 1)
+#                       ).to(device)
         
-        self.centers = torch.linspace(0, r_cut, n_gaussians).unsqueeze(0).to(device)
-        self.sigma = r_cut/n_gaussians*2
-        self.centers_rho = torch.linspace(-10, 2, 5).unsqueeze(0).to(device)
-        self.sigma_rho = 2
-        self.r_cut = r_cut
+#         self.centers = torch.linspace(0, r_cut, n_gaussians).unsqueeze(0).to(device)
+#         self.sigma = r_cut/n_gaussians*2
+#         self.centers_rho = torch.linspace(-10, 2, 5).unsqueeze(0).to(device)
+#         self.sigma_rho = 2
+#         self.r_cut = r_cut
         
-    def forward(self, rho, edge_index, pos):
-        propagated =  self.propagate(edge_index, x=rho, pos=pos) 
-        return propagated
+#     def forward(self, rho, edge_index, pos):
+#         propagated =  self.propagate(edge_index, x=rho, pos=pos) 
+#         return propagated
     
-    def eval_gaussians(self, dr):
-        return torch.exp(-((dr-self.centers)/self.sigma)**2/2)
+#     def eval_gaussians(self, dr):
+#         return torch.exp(-((dr-self.centers)/self.sigma)**2/2)
     
-    def eval_gaussians_rho(self, rho):
-        return torch.exp(-((rho-self.centers_rho)/self.sigma_rho)**2/2)
+#     def eval_gaussians_rho(self, rho):
+#         return torch.exp(-((rho-self.centers_rho)/self.sigma_rho)**2/2)
     
-    def message(self, x_i, x_j,pos_i,pos_j):
+#     def message(self, x_i, x_j,pos_i,pos_j):
 
-        dr =  torch.norm(pos_j - pos_i,dim=-1,keepdim=True)
-        dr_embedded = self.eval_gaussians(dr)
+#         dr =  torch.norm(pos_j - pos_i,dim=-1,keepdim=True)
+#         dr_embedded = self.eval_gaussians(dr)
         
-        tmp = torch.cat([self.eval_gaussians_rho(x_i[:,:1]+x_j[:,:1]),
-                         self.eval_gaussians_rho(-torch.abs(x_i[:,:1]-x_j[:,:1])), 
-                         dr_embedded], dim=1)  # tmp has shape [E, 2 * in_channels]
+#         tmp = torch.cat([self.eval_gaussians_rho(x_i[:,:1]+x_j[:,:1]),
+#                          self.eval_gaussians_rho(-torch.abs(x_i[:,:1]-x_j[:,:1])), 
+#                          dr_embedded], dim=1)  # tmp has shape [E, 2 * in_channels]
         
-        fc = 1-(.5*(1-torch.cos(np.pi*(dr)/self.r_cut)))**8
-        result = self.mlp(tmp)*fc*torch.exp(x_j[:,:1])**3
+#         fc = 1-(.5*(1-torch.cos(np.pi*(dr)/self.r_cut)))**8
+#         result = self.mlp(tmp)*fc*torch.exp(x_j[:,:1])**3
     
-        return result*x_j[:,1:]
+#         return result*x_j[:,1:]
