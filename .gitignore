@@ -105,3 +105,4 @@ data/ccsdt/
 data/ccsdt
 slurm/
 data/ref/
+tmp*
