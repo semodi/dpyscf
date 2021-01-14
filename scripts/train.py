@@ -136,7 +136,8 @@ if __name__ == '__main__':
     indices = np.arange(len(atoms)).tolist()
 
     if args.type == 'GGA':
-        pop = [12, 7,  5] # (Hybrid GGA)
+        pop = [12, 8, 7,  5, 4] # (Hybrid GGA)
+#         pop = [12, 7, 5]
     else:
         pop = [21, 12, 11, 10, 8, 7, 5, 4, 1] # (Meta-GGA)
 
