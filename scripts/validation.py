@@ -12,6 +12,7 @@ import os
 from ase.units import Hartree
 from test_bh76 import test_bh
 from ase.units import Hartree,kcal,mol
+from dpyscf.losses import *
 kcalpmol = kcal/mol
 basis = '6-311++G(3df,2pd)'
 # basis = '3-21G'
@@ -19,14 +20,16 @@ basis = '6-311++G(3df,2pd)'
 
 #systems = [2, 113, 25, 18, 114, 0, 20, 26] #Training
 systems = [103, 14, 23, 5, 10, 79, 27, 105] #Validation
+systems = [5] #Validation
 # systems = [103, 14]
 bh_systems = [1, 23, 60]
+bh_systems = [1]
 #bh_systems = [1]
 # systems = [50]
-atoms = read('../haunschild_g2/g2_97.traj',':')
+atoms = read('../data/haunschild_g2/g2_97.traj',':')
 atoms = [atoms[s] for s in systems]
 e_ref = -np.array([a.get_potential_energy()/Hartree for a in atoms])
-dm_refs = [np.load('./ccsdt/{}.dm.npy'.format(s)) for s in systems]
+dm_refs = [np.load('../data/ccsdt/{}.dm.npy'.format(s)) for s in systems]
 
 N = len(atoms)
 
@@ -51,30 +54,39 @@ atoms += [Atoms(a, info={'spin':spins[a]}) for a in np.unique([s for a in atoms 
 
 
 def run_validate(nxc='MGGA_tmp', xc_type='nxc'):
-    
+
+    from_listener = False
     if not isinstance(nxc,str):
+        from_listener = True
         nxc.evaluate()
+        if nxc.level == 2:
+            tmpmod = 'GGA_TMP'
+        elif nxc.level == 3:
+            tmpmod = 'MGGA_TMP'
+        else:
+            raise Exception("Something went wrong here")
+
         nxc.forward_old = nxc.forward
         nxc.forward = nxc.eval_grid_models
         traced = torch.jit.trace(nxc, torch.rand(100,9))
         try:
-            os.mkdir('GGA_TMP')
+            os.mkdir(tmpmod)
         except FileExistsError:
             pass
-        
-        exx_a = 0  
+
+        exx_a = 0
         if hasattr(nxc, 'exx_a'):
             exx_a = nxc.exx_a.detach().numpy()
-     
-        torch.jit.save(traced, 'GGA_TMP/xc')
+
+        torch.jit.save(traced, tmpmod + '/xc')
 
         nxc.forward = nxc.forward_old
         nxc.train()
         nxc_type = 'nxc'
         if exx_a:
-            nxc = '{}*HF, GGA_TMP'.format(exx_a[0])
+            nxc = '{}*HF,'.format(exx_a[0]) + tmpmod
         else:
-            nxc = 'GGA_TMP'
+            nxc = tmpmod
 
     pred_dict = {}
     dm_loss = []
@@ -90,7 +102,7 @@ def run_validate(nxc='MGGA_tmp', xc_type='nxc'):
         except Exception:
             spin =1
             mol = gto.M(atom=mol_input, basis=this_basis,spin=spin)
-            
+
         method = pylibnxc.pyscf.UKS
         mol.verbose=4
         if xc_type == 'nxc':
@@ -98,7 +110,7 @@ def run_validate(nxc='MGGA_tmp', xc_type='nxc'):
         elif xc_type == 'xc':
             mf = method(mol)
             mf.xc = nxc
-            
+
         mf.grids.level=5
         mf.kernel()
         dm_predicted = mf.make_rdm1()
@@ -106,20 +118,22 @@ def run_validate(nxc='MGGA_tmp', xc_type='nxc'):
         if len(pos) > 1:
             if dm_ref.ndim == 2:
                     dm_ref = np.stack([dm_ref,dm_ref],axis=0)*.5
-          
+
             rho_predicted = get_rho(mf, mol, np.sum(dm_predicted, axis=0), mf.grids)
             rho_ref = get_rho(mf, mol, np.sum(dm_ref, axis=0), mf.grids)
             dev = np.sqrt(np.sum((rho_predicted - rho_ref)**2*mf.grids.weights))/(np.sum(rho_predicted*mf.grids.weights))
             dm_loss.append(dev)
-                
+
     ae_pred = atomization_energies(pred_dict)
     pred = np.array([ae_pred[''.join(a.get_chemical_symbols())] for a in atoms if len(a.positions) > 1])
+
+    if not from_listener:
+        np.save('ae.npy', pred)
+        np.save('dmloss.npy',dm_loss)
     
-    np.save('ae.npy', pred)
-    ae_loss = np.mean(np.abs(pred - e_ref))
-    np.save('dmloss.npy',dm_loss)
     dm_loss = np.mean(dm_loss)
-    
+    ae_loss = np.mean(np.abs(pred - e_ref))
+
     return ae_loss, dm_loss
 
 if __name__ == '__main__':

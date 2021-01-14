@@ -2,7 +2,7 @@ import pylibnxc
 from pyscf import gto, scf, dft
 import json
 from ase.io import read, write
-import numpy as np 
+import numpy as np
 import sys
 from ase.units import Hartree, kcal, mol
 kcalpmol = kcal/mol
@@ -10,9 +10,9 @@ kcalpmol = kcal/mol
 
 
 def test_bh(xc, nxc='nxc', indices= []):
-    with open('bh_76_instructions.json','r') as file:
+    with open('../data/bh_76_instructions.json','r') as file:
         instructions = json.load(file)
-    with open('bh_76_dict.json','r') as file:
+    with open('../data/bh_76_dict.json','r') as file:
         xyz_dict = json.load(file)
 
     basis = '6-311++G(3df,2pd)'
@@ -24,7 +24,7 @@ def test_bh(xc, nxc='nxc', indices= []):
         geometries = inst['setup']['reaction_geometries']
         xyz_data = {}
         for geom in geometries:
-            xyz_data[geom] = read('xyz/' + xyz_dict[geom[2:]],':')
+            xyz_data[geom] = read('../data/xyz/' + xyz_dict[geom[2:]],':')
 
 
         reference_heights.append(inst['reference_value'])
@@ -64,7 +64,7 @@ def test_bh(xc, nxc='nxc', indices= []):
             energies.append(mf.e_tot)
         barrier_heights.append(Hartree/kcalpmol*(energies[-1] - np.sum(energies[:-1])))
     return barrier_heights, reference_heights
-    
+
 if __name__ == '__main__':
     barrier_heights, reference_heights = test_bh(*sys.argv[1:])
     np.save('{}_bh76.npy'.format(sys.argv[1]), barrier_heights)
