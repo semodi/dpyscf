@@ -11,7 +11,7 @@ def energy_loss(results, loss, **kwargs):
     E_ref = results['E_ref']
     weights = kwargs.get('weights', torch.linspace(0,1,E.size()[0])**2).to(results['E'].device)
     skip_steps = kwargs.get('skip_steps',0)
-    
+
     dE = weights*(E_ref - E)
     dE = dE[skip_steps:]
     ldE = loss(dE, torch.zeros_like(dE))
@@ -21,7 +21,7 @@ def econv_loss(results, loss, **kwargs):
     E = results['E']
     weights = kwargs.get('weights', torch.linspace(0,1,E.size()[0])**2).to(results['E'].device)
     skip_steps = kwargs.get('skip_steps',0)
-    
+
     dE = weights*(E - E[-1])
     dE = dE[skip_steps:]
     ldE = loss(dE, torch.zeros_like(dE))
@@ -35,8 +35,8 @@ def ae_loss(ref_dict,pred_dict, loss, **kwargs):
     weights = kwargs.get('weights', torch.linspace(0,1,pred.size()[0])**2).to(pred.device)
     lae = loss((ref-pred)*weights,torch.zeros_like(pred))
     return lae
-    
-    
+
+
 def dm_loss(results, loss, **kwargs):
     fcenter = results['fcenter'][0]
     dm = results['dm']
@@ -57,16 +57,19 @@ def rho_loss(results, loss, **kwargs):
         drho = torch.sqrt(torch.sum((rho-rho_ref)**2*results['grid_weights'])/results['n_elec'][0,0]**2)
 #         drho = (rho-rho_ref)*torch.sqrt(results['grid_weights'])/results['n_elec'][0,0]
         lrho = loss(drho, torch.zeros_like(drho))
-    
+
     else:
         rho = torch.einsum('ij,ik,xjk->xi',
                            ao_eval[0], ao_eval[0], dm)
-        drho = torch.sqrt(torch.sum((rho[0]-rho_ref[0])**2*results['grid_weights'])/torch.sum(results['mo_occ'][0,0])**2 +\
-               torch.sum((rho[1]-rho_ref[1])**2*results['grid_weights'])/torch.sum(results['mo_occ'][0,1])**2)
-        
+        if torch.sum(results['mo_occ']) == 1:
+            drho = torch.sqrt(torch.sum((rho[0]-rho_ref[0])**2*results['grid_weights'])/torch.sum(results['mo_occ'][0,0])**2)
+        else:
+            drho = torch.sqrt(torch.sum((rho[0]-rho_ref[0])**2*results['grid_weights'])/torch.sum(results['mo_occ'][0,0])**2 +\
+                   torch.sum((rho[1]-rho_ref[1])**2*results['grid_weights'])/torch.sum(results['mo_occ'][0,1])**2)
+
 #         drho = torch.cat([(rho[0]-rho_ref[0])*torch.sqrt(results['grid_weights'])/results['n_elec'][0,0],
 #                           (rho[1]-rho_ref[1])*torch.sqrt(results['grid_weights'])/results['n_elec'][0,0]])
-        
+
         lrho = loss(drho, torch.zeros_like(drho))
     return lrho
 
@@ -92,7 +95,7 @@ def atomization_energies(energies):
         import re
         res_list = [s for s in re.split("([A-Z][^A-Z]*)", el) if s]
         return res_list
-   
+
 
     ae = {}
     for key in energies:
@@ -102,6 +105,6 @@ def atomization_energies(energies):
         else:
             e_tot = np.array(energies[key])
         for symbol in split(key):
-            e_tot -= energies[symbol] 
+            e_tot -= energies[symbol]
         ae[key] = e_tot
     return ae

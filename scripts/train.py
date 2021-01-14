@@ -11,14 +11,13 @@ import numpy as np
 import scipy
 from ase import Atoms
 from ase.io import read
-from dpyscf.net import * 
-from dpyscf.torch_routines import * 
+from dpyscf.net import *
+from dpyscf.torch_routines import *
 from dpyscf.utils import *
 from dpyscf.losses import *
 from pyscf.cc import CCSD
 from functools import partial
 from ase.units import Bohr
-# from atoms import *
 from datetime import datetime
 import sys
 import shutil
@@ -26,34 +25,50 @@ import os
 import psutil
 import gc
 import tarfile
+import argparse
+import json
 
 process = psutil.Process(os.getpid())
 dpyscf_dir = os.environ.get('DPYSCF_DIR','..')
-
-RHO_mult = 25
-E_mult = 0.0
 DEVICE = 'cpu'
-HYBRID=False
-keep_net_fixed=False
 
-    
-        
-def get_scf(path=''):
+parser = argparse.ArgumentParser(description='Train xc functional')
+parser.add_argument('pretrain_loc', action='store', type=str, help='Location of pretrained models (should be directory containing x and c)')
+parser.add_argument('type', action='store', choices=['GGA','MGGA'])
+parser.add_argument('datapath', action='store', type=str, help='Location of precomputed matrices (run prep_data first)')
+parser.add_argument('--n_hidden', metavar='n_hidden', type=int, default=16, help='Number of hidden nodes')
+parser.add_argument('--hyb_par', metavar='hyb_par', type=float, default=0.0, help='Hybrid mixing parameter')
+parser.add_argument('--E_weight', metavar='e_weight', type=float, default=0.0, help='Weight of total energy term in loss function')
+parser.add_argument('--rho_weight', metavar='rho_weight', type=float, default=25, help='Weight of density term in loss function')
+parser.add_argument('--modelpath', metavar='modelpath', type=str, default='', help='Checkpoint location to continue training')
+parser.add_argument('--logpath', metavar='logpath', type=str, default='log/', help='Logging directory')
+parser.add_argument('--testrun', action='store_true', help='Do a test run over all molecules before training')
+parser.add_argument('--lr', metavar='lr', type=float, default=0.0001, help='Learning rate')
+parser.add_argument('--l2', metavar='l2', type=float, default=1e-8, help='Weight decay')
+parser.add_argument('--hnorm', action='store_true', help='Use H energy and density in loss')
+parser.add_argument('--print_stdout', action='store_true', help='Print to stdout instead of logfile')
 
-#     x = XC_L(device=DEVICE,n_input=1, n_hidden=16, spin_scaling=True, use=[1], lob=True) # PBE_X
-#     x.load_state_dict(torch.load('pbe_new/pbe_x_16_new',map_location=torch.device('cpu')))
 
-#     c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2])
-#     c.load_state_dict(torch.load('pbe_new/pbe_c_16_new',map_location=torch.device('cpu')))
-#     xc_level = 2
-    
-    x = XC_L(device=DEVICE,n_input=2, n_hidden=16, spin_scaling=True, use=[1,2], lob=True) # PBE_X
-    x.load_state_dict(torch.load(dpyscf_dir + '/models/pretrained/scan_models/scan_x_16',map_location=torch.device('cpu')))
-    
-#     c = XC_L(device=DEVICE,n_input=2, n_hidden=32, spin_scaling=True, use=[1,2], lob=False) # PBE_X
-    c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3])
-    c.load_state_dict(torch.load(dpyscf_dir + '/models/pretrained/scan_models/scan_c_16',map_location=torch.device('cpu')))
-    xc_level = 3
+args = parser.parse_args()
+
+RHO_mult = args.rho_weight
+E_mult = args.E_weight
+HYBRID = (args.hyb_par > 0.0)
+
+def get_scf(path=args.modelpath):
+
+    if args.type == 'GGA':
+        x = XC_L(device=DEVICE,n_input=1, n_hidden=16, spin_scaling=True, use=[1], lob=True) # PBE_X
+        c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2])
+        xc_level = 2
+    elif args.type == 'MGGA':
+        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, spin_scaling=True, use=[1,2], lob=True) # PBE_X
+        c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3])
+        xc_level = 3
+    print("Loading pre-trained models from " + args.pretrain_loc)
+    x.load_state_dict(torch.load(args.pretrain_loc + '/x'))
+    c.load_state_dict(torch.load(args.pretrain_loc + '/c'))
+
     if HYBRID:
         try:
             a = 0.75
@@ -65,7 +80,7 @@ def get_scf(path=''):
             if path:
                 xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
 
-            xc.add_model_mult([a,b])   
+            xc.add_model_mult([a,b])
             xc.add_exx_a(d)
             xc.model_mult.requires_grad=True
             xc.exx_a.requires_grad=True
@@ -86,51 +101,49 @@ def get_scf(path=''):
         scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
         if path:
             xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
-    
-    
-    scf.xc.train()    
-    return scf 
+
+    scf.xc.train()
+    return scf
 
 if __name__ == '__main__':
     if HYBRID:
-        logpath = 'log/' + str(datetime.now()).replace(' ','_') 
+        logpath = args.logpath + str(datetime.now()).replace(' ','_')
     else:
-        logpath = 'log/' + str(datetime.now()).replace(' ','_')
-    def print(*args):
-        with open(logpath + '.log','a') as logfile:
-            logfile.write(' ,'.join([str(a) for a in args]) + '\n')
-            
+        logpath = args.logpath + str(datetime.now()).replace(' ','_')
+
+    if not args.print_stdout:
+        def print(*args):
+            with open(logpath + '.log','a') as logfile:
+                logfile.write(' ,'.join([str(a) for a in args]) + '\n')
+
     try:
-        os.mkdir(logpath.split('/')[0])
+        os.mkdir('/'.join(logpath.split('/')[:-1]))
     except FileExistsError:
         pass
-    
+
+    print(json.dumps(args.__dict__,indent=4))
+
     with tarfile.open(logpath + 'tar.gz', "w:gz") as tar:
         source_dir = dpyscf_dir + '/dpyscf/'
         tar.add(source_dir, arcname=os.path.basename(source_dir))
         source_dir = __file__
         tar.add(source_dir, arcname=os.path.basename(source_dir))
 
-    
     atoms = read(dpyscf_dir + '/data/haunschild_training.traj',':')
+    # atoms = read(dpyscf_dir + '/data/haunschild_test.traj',':')
     indices = np.arange(len(atoms)).tolist()
-    pol ={'Be':True, 'HBeH':True, 'FF':False,'OCO':True,'ClCl':True, 'OO':True}
 
-#     select = [0, 16]
-#     atoms = [atoms[sel] for sel in select]
-#     indices = [indices[sel] for sel in select] 
-
-    if HYBRID:
+    if args.type == 'GGA':
         pop = [12, 7,  5] # (Hybrid GGA)
     else:
-        pop = [21, 12, 10, 8, 7, 6, 5, 4,3, 2, 0] # (Meta-GGA)
-        
+        pop = [21, 12, 11, 10, 8, 7, 5, 4, 1] # (Meta-GGA)
+
     [atoms.pop(i) for i in pop]
     [indices.pop(i) for i in pop]
 
 
-  
-    dataset = MemDatasetRead('/gpfs/home/smdick/smdick/.data_scan/test', skip=pop)
+
+    dataset = MemDatasetRead(args.datapath, skip=pop)
 
 #     dataset = MemDatasetRead('/gpfs/home/smdick/smdick/.data/test', skip= [12, 8, 5, 4])
 
@@ -158,31 +171,34 @@ if __name__ == '__main__':
 
     best_loss = 1e6
 
-    if len(sys.argv) > 1:
-        scf = get_scf(sys.argv[1])
-    else:
-        scf = get_scf()
+    scf = get_scf(args.modelpath)
+
+    if args.testrun:
+        print("\n ======= Starting testrun ====== \n\n")
         scf.xc.evaluate()
+        Es = []
+        E_pretrained = []
+        cnt = 0
+        for dm_init, matrices, e_ref, dm_ref in dataloader_train:
+            print(atoms[cnt])
+            cnt += 1
+            dm_init = dm_init.to(DEVICE)
+            e_ref = e_ref.to(DEVICE)
+            dm_ref = dm_ref.to(DEVICE)
+            matrices = {key:matrices[key].to(DEVICE) for key in matrices}
+            E_pretrained.append(matrices['e_pretrained'])
+            results = scf.forward(matrices['dm_realinit'], matrices)
+            E = results['E']
+            Es.append(E.detach().cpu().numpy())
 
+        e_premodel = np.array(Es)[:,-1]
+        print("\n ------- Statistics ----- ")
+        print(str(e_premodel), 'Energies from pretrained model' )
+        print(str(np.array(E_pretrained)),'Energies from exact DFT baseline')
+        print(str(e_premodel - np.array(E_pretrained)), 'Pretraining error')
+        print(str(np.array(Es)[:,-1]-np.array(Es)[:,-2]), 'Convergence')
 
-#         Es = []
-#         cnt = 0 
-#         for dm_init, matrices, e_ref, dm_ref in dataloader_train:
-#             print(atoms[cnt])
-#             cnt += 1
-#             dm_init = dm_init.to(DEVICE)
-#             e_ref = e_ref.to(DEVICE)
-#             dm_ref = dm_ref.to(DEVICE)
-#             matrices = {key:matrices[key].to(DEVICE) for key in matrices}
-
-#             results = scf.forward(matrices['dm_realinit'], matrices)
-#             E = results['E']
-#             Es.append(E.detach().cpu().numpy())
-
-
-#         print(str(np.array(Es)[:,-1]))
-#         print(str(np.array(Es)[:,-1]-np.array(Es)[:,-2]))
-
+    print("\n ======= Starting training ====== \n\n")
 
     scf.xc.train()
     PRINT_EVERY=1
@@ -190,21 +206,15 @@ if __name__ == '__main__':
 
     def get_optimizer(model, path=''):
         if HYBRID:
-            if keep_net_fixed:
-                optimizer = torch.optim.Adam([model.xc.model_mult, model.xc.exx_a],
-                             lr=0.001,weight_decay=0)
-            else:
-                optimizer = torch.optim.Adam(list(model.parameters()) + [model.xc.model_mult, model.xc.exx_a],
-                                          lr=0.0001, weight_decay=1e-8)
-#         #                              lr=0.001, weight_decay=1e-8)
+            optimizer = torch.optim.Adam(list(model.parameters()) + [model.xc.model_mult, model.xc.exx_a],
+                                      lr=args.lr, weight_decay=args.l2)
         else:
             optimizer = torch.optim.Adam(model.parameters(),
-                                      lr=0.0000, weight_decay=1e-8)
-#                                       lr=0.0001, weight_decay=1e-8)
+                                      lr=args.lr, weight_decay=args.l2)
 
         MIN_RATE = 1e-7
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min',
-                                                               verbose=True, patience=int(10/PRINT_EVERY), 
+                                                               verbose=True, patience=int(10/PRINT_EVERY),
                                                                factor=0.1, min_lr=MIN_RATE)
 
         if path:
@@ -216,11 +226,9 @@ if __name__ == '__main__':
     AE_mult = 1
 
     mol_losses = {"rho" : (partial(rho_loss,loss = torch.nn.MSELoss()), RHO_mult)}
-    #              "Conv" :(partial(econv_loss,loss = torch.nn.MSELoss(),skip_steps=skip_steps), 1e-6)}
-
-    # No rho loss for atoms
     atm_losses = {}
-    #                "Conv" :(partial(econv_loss,loss = torch.nn.MSELoss(),skip_steps=skip_steps), 1e-6)}
+    h_losses = {"rho" : (partial(rho_loss,loss = torch.nn.MSELoss()), RHO_mult),
+                "E":  (partial(energy_loss, loss = torch.nn.MSELoss()), E_mult)}
 
     ae_loss = partial(ae_loss,loss = torch.nn.MSELoss())
 
@@ -233,7 +241,9 @@ if __name__ == '__main__':
         while(encountered_nan):
             error_cnt = 0
             running_losses = {key:0 for key in mol_losses}
-            running_losses['ae'] = 0 
+            running_losses['ae'] = 0
+            if args.hnorm:
+                running_losses['E'] = 0
             total_loss = 0
             atm_cnt = {}
             encountered_nan = False
@@ -266,8 +276,9 @@ if __name__ == '__main__':
                         results['mo_occ'] = matrices['mo_occ']
                         if len(atoms[idx].positions) > 1:
                             losses = mol_losses
-#                         elif (not str(atoms[idx].symbols) in ['H','Be','Li']):
-#                             losses = atm_losses
+                        elif str(atoms[idx].symbols) in ['H'] and args.hnorm:
+                            losses = h_losses
+                            results['E_ref'] = -0.5
                         else:
                             losses = atm_losses
                         losses_eval = {key: losses[key][0](results)/a_count[idx] for key in losses}
@@ -320,8 +331,3 @@ if __name__ == '__main__':
             if HYBRID:
                 print(scf.xc.model_mult , scf.xc.exx_a)
             scheduler.step(total_loss)
-
-
-
-
-
