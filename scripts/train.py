@@ -131,8 +131,8 @@ if __name__ == '__main__':
         source_dir = __file__
         tar.add(source_dir, arcname=os.path.basename(source_dir))
 
-    # atoms = read(dpyscf_dir + '/data/haunschild_training.traj',':')
-    atoms = read(dpyscf_dir + '/data/haunschild_test.traj',':')
+    atoms = read(dpyscf_dir + '/data/haunschild_training.traj',':')
+    # atoms = read(dpyscf_dir + '/data/haunschild_test.traj',':')
     indices = np.arange(len(atoms)).tolist()
 
     if args.type == 'GGA':
@@ -140,7 +140,7 @@ if __name__ == '__main__':
     else:
         pop = [21, 12, 11, 10, 8, 7, 5, 4, 1] # (Meta-GGA)
 
-    pop = []
+    # pop = []
     [atoms.pop(i) for i in pop]
     [indices.pop(i) for i in pop]
 

@@ -8,11 +8,11 @@ from ase.io import read
 import pylibnxc
 import sys
 import pickle
-from losses import *
+from dpyscf.losses import *
 basis = '6-311++G(3df,2pd)'
 
 # num_threads(1)
-atoms = read('../../haunschild_g2/g2_97.traj',':')
+atoms = read('../data/haunschild_g2/g2_97.traj',':')
 # systems = [103, 14, 23, 5, 10, 79, 27, 105] #Validation
 # atoms = [atoms[s] for s in systems]
 
@@ -49,7 +49,7 @@ mols = []
 for a in atoms:
     print(a)
     spin = a.info.get('spin', 0)
-     
+
     pos = a.positions
 #     if len(pos)==1:
 #         this_basis = '6-311++G'
@@ -62,12 +62,12 @@ for a in atoms:
     except Exception:
         spin =1
         mol = gto.M(atom=mol_input, basis=this_basis,spin=spin)
-        
+
     if spin == 0:
         method = pylibnxc.pyscf.UKS
     else:
         method = pylibnxc.pyscf.UKS
-        
+
     mol.verbose=4
 #     mf = method(mol, nxc='MGGA_trial4', nxc_kind='grid')
     if sys.argv[2] == 'nxc':
@@ -75,11 +75,11 @@ for a in atoms:
     elif sys.argv[2] == 'xc':
         mf = method(mol)
         mf.xc = sys.argv[1]
-     
+
     mf.grids.level=5
 #     mf.grids.level=1
     mf.kernel()
-    
+
     dm_predicted.append(mf.make_rdm1())
     if len(pos) == 1:
         atoms_predicted[a.get_chemical_symbols()[0]] = mf.e_tot

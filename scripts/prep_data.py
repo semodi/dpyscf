@@ -22,11 +22,11 @@ if __name__ == '__main__':
         atoms = read('../data/haunschild_scan.traj',':')
     elif func == 'PBE':
         atoms = read('../data/haunschild_training.traj',':')
-    # indices = np.arange(len(atoms))
+    indices = np.arange(len(atoms))
 
     #TESTING
-    indices = [0, 16]
-    atoms = [atoms[i] for i in indices]
+    # indices = [0, 16]
+    # atoms = [atoms[i] for i in indices]
     
     # indices = [0, 11, 16, 17]
     # pol ={'Be':True, 'HBeH':True, 'FF':True,'OCO':True,'ClCl':True,'OC':True}
