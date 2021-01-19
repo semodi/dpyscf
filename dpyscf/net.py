@@ -10,6 +10,55 @@ from ase import Atoms
 from ase.io import read
 from .torch_routines import *
 
+def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu'):
+
+    if xctype == 'GGA':
+        x = XC_L(device=DEVICE,n_input=1, n_hidden=16, spin_scaling=True, use=[1], lob=True) # PBE_X
+        c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2])
+        xc_level = 2
+    elif xctype == 'MGGA':
+        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, spin_scaling=True, use=[1,2], lob=True) # PBE_X
+        c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3])
+        xc_level = 3
+    print("Loading pre-trained models from " + pretrain_loc)
+    x.load_state_dict(torch.load(pretrain_loc + '/x'))
+    c.load_state_dict(torch.load(pretrain_loc + '/c'))
+
+    if hyb_par:
+        try:
+            a = 1 - hyb_par
+            b = 1
+            d = hyb_par
+            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, model_mult=[] )
+            scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
+
+            if path:
+                xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+
+            xc.add_model_mult([a,b])
+            xc.add_exx_a(d)
+            xc.model_mult.requires_grad=True
+            xc.exx_a.requires_grad=True
+        except RuntimeError:
+            a = 1 - hyb_par
+            b = 1
+            d = hyb_par
+            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, model_mult=[a, b],exx_a=d)
+            scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
+
+            if path:
+                xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+            xc.model_mult.requires_grad=True
+            xc.exx_a.requires_grad=True
+
+    else:
+        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level)
+        scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
+        if path:
+            xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+
+    scf.xc.train()
+    return scf
 
 
 epsilon=0
@@ -58,7 +107,8 @@ class XC(torch.nn.Module):
         self.training = True
         self.level = level
         self.epsilon = 1e-7
-        self.loge = 1e-3
+        self.loge = 1e-8
+#         self.loge = 1e-3
         self.s_gam = 1
 
         if heg_mult:
@@ -215,13 +265,18 @@ class XC(torch.nn.Module):
                 ao_eval = self.ao_eval.unsqueeze(0)
             else:
                 ao_eval = self.ao_eval
+                
+            if self.training:
+                noise = torch.abs(torch.randn(dm.size(),device=dm.device)*1e-8)
+                noise = noise + torch.transpose(noise,-1,-2)
+#                 dm += noise
 #             rho = .5*(torch.einsum('ij,xik,jk->xi', self.ao_eval[0], self.ao_eval, dm) +
 #                   torch.einsum('xij,ik,jk->xi', self.ao_eval, self.ao_eval[0], dm))
-            rho = torch.einsum('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm ) 
+            rho = torch.einsum('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm + noise ) 
             if dm1 is None:
                 dm1 = dm
             
-            rho2 = torch.einsum('xij,yik,...jk->xy...i', ao_eval[1:], ao_eval[1:], dm1) 
+            rho2 = torch.einsum('xij,yik,...jk->xy...i', ao_eval[1:], ao_eval[1:], dm1 + noise) 
 #             rho2 = rho[1:,1:,...]
 #             if self.training:
 #                 noise = torch.abs(torch.randn(rho[:,:,0].size(),device=rho.device)*1e-8)
@@ -246,10 +301,10 @@ class XC(torch.nn.Module):
                 gamma_a=gamma_b=gamma_ab= torch.einsum('ij,ij->j',drho[:],drho[:])*0.25
                 tau_a = tau_b = tau*0.5
                 
-            if self.training:
-                noise = torch.abs(torch.randn(rho0_a.size(),device=rho.device)*1e-8)
-                rho0_a += noise
-                rho0_b += noise
+#             if self.training:
+#                 noise = torch.abs(torch.randn(rho0_a.size(),device=rho.device)*1e-6)
+#                 rho0_a += noise
+#                 rho0_b += noise
                   
             exc = self.eval_grid_models(torch.cat([rho0_a.unsqueeze(-1),
                                                     rho0_b.unsqueeze(-1),

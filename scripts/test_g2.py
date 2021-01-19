@@ -12,7 +12,10 @@ from dpyscf.losses import *
 basis = '6-311++G(3df,2pd)'
 
 # num_threads(1)
-atoms = read('../data/haunschild_g2/g2_97.traj',':')
+try:
+    atoms = read('../data/haunschild_g2/g2_97.traj',':')
+except:
+    atoms = read('../../data/haunschild_g2/g2_97.traj',':')
 # systems = [103, 14, 23, 5, 10, 79, 27, 105] #Validation
 # atoms = [atoms[s] for s in systems]
 

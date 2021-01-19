@@ -29,8 +29,10 @@ if __name__ == '__main__':
     # atoms = [atoms[i] for i in indices]
     
     # indices = [0, 11, 16, 17]
-    # pol ={'Be':True, 'HBeH':True, 'FF':True,'OCO':True,'ClCl':True,'OC':True}
-    pol ={}
+    if func =='PBE':
+        pol ={'FF':True,'LiF':True,'LiH':True}
+    else:
+        pol ={}
 
     basis = '6-311++G(3df,2pd)'
 
