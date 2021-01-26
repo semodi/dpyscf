@@ -29,28 +29,26 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu'):
             a = 1 - hyb_par
             b = 1
             d = hyb_par
-            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, model_mult=[] )
+            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level )
             scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
-
+            
+            xc.add_exx_a(d)
+            xc.exx_a.requires_grad=True
+            
             if path:
                 xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
 
-            xc.add_model_mult([a,b])
-            xc.add_exx_a(d)
-            xc.model_mult.requires_grad=True
-            xc.exx_a.requires_grad=True
         except RuntimeError:
             a = 1 - hyb_par
             b = 1
             d = hyb_par
-            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, model_mult=[a, b],exx_a=d)
+            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, exx_a=d)
             scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
-
+            print(xc.exx_a)
             if path:
                 xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
-            xc.model_mult.requires_grad=True
             xc.exx_a.requires_grad=True
-
+            print(xc.exx_a)
     else:
         xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level)
         scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
@@ -97,7 +95,7 @@ def get_M(basis):
 
 class XC(torch.nn.Module):
     
-    def __init__(self, grid_models=None, nxc_models=None, heg_mult=True, level = 1, model_mult=[], exx_a=None):
+    def __init__(self, grid_models=None, nxc_models=None, heg_mult=True, level = 1, exx_a=None):
         super().__init__()
         self.grid_models = None
         self.nxc_models = None
@@ -120,14 +118,16 @@ class XC(torch.nn.Module):
         if nxc_models:
             if not isinstance(nxc_models, list): grid_models = [nxc_models]
             self.nxc_models = torch.nn.ModuleList(nxc_models)
-        if model_mult:
-            assert len(model_mult) == len(grid_models)
-            self.register_buffer('model_mult',torch.Tensor(model_mult))
-        else:
-            self.model_mult = [1 for m in self.grid_models]
+#         if model_mult:
+#             assert len(model_mult) == len(grid_models)
+#             self.register_buffer('model_mult',torch.Tensor(model_mult))
+#         else:
+        self.model_mult = [1 for m in self.grid_models]
         if exx_a is not None:
             self.register_buffer('exx_a', torch.Tensor([exx_a]))
-        
+        else:
+#             self.register_buffer('exx_a', torch.Tensor([0]))
+            self.exx_a = 0
     def evaluate(self):
         self.training=False
     def train(self):
@@ -138,8 +138,8 @@ class XC(torch.nn.Module):
         self.register_buffer('model_mult',torch.Tensor(model_mult))
     
     def add_exx_a(self, exx_a):
-        self.register_buffer('exx_a', torch.Tensor([exx_a]))
-      
+#         self.register_buffer('exx_a', torch.Tensor([exx_a]))
+        self.exx_a = torch.Tensor([exx_a])
     
 #     def get_descriptors(self, rho0_a, rho0_b, gamma_a, gamma_b, gamma_ab, tau_a, tau_b, spin_scaling = False):
       
@@ -269,6 +269,8 @@ class XC(torch.nn.Module):
             if self.training:
                 noise = torch.abs(torch.randn(dm.size(),device=dm.device)*1e-8)
                 noise = noise + torch.transpose(noise,-1,-2)
+            else:
+                noise = torch.zeros_like(dm)
 #                 dm += noise
 #             rho = .5*(torch.einsum('ij,xik,jk->xi', self.ao_eval[0], self.ao_eval, dm) +
 #                   torch.einsum('xij,ik,jk->xi', self.ao_eval, self.ao_eval[0], dm))
@@ -348,14 +350,14 @@ class XC(torch.nn.Module):
 
         if self.grid_models:
 
-            for grid_model, m in zip(self.grid_models, self.model_mult):
+            for grid_model in self.grid_models:
                 if not grid_model.spin_scaling:
                     if not 'c' in descr_dict:
                         descr_dict['c'] = self.get_descriptors(rho0_a, rho0_b, gamma_a, gamma_b,
                                                                          gamma_ab, tau_a, tau_b, spin_scaling = False)
                     descr = descr_dict['c']
 
-                    exc_ab += m*grid_model(descr, 
+                    exc_ab += grid_model(descr, 
                                       grid_coords = self.grid_coords,
                                       edge_index = self.edge_index)
 
@@ -370,20 +372,20 @@ class XC(torch.nn.Module):
                                   grid_coords = self.grid_coords,
                                   edge_index = self.edge_index)
 
-                    
+                        
                     if self.heg_mult:
-                        exc_a += (1 + exc[0])*self.heg_model(2*rho0_a)*m
+                        exc_a += (1 + exc[0])*self.heg_model(2*rho0_a)*(1-self.exx_a)
                     else:
-                        exc_a += exc[0]*m
+                        exc_a += exc[0]*(1-self.exx_a)
                         
                     if torch.all(rho0_b == torch.zeros_like(rho0_b)): #Otherwise produces NaN's
                         exc_b += exc[0]*0
 #                         print("hydrogen")
                     else:
                         if self.heg_mult:
-                            exc_b += (1 + exc[1])*self.heg_model(2*rho0_b)*m
+                            exc_b += (1 + exc[1])*self.heg_model(2*rho0_b)*(1-self.exx_a)
                         else:
-                            exc_b += exc[1]*m
+                            exc_b += exc[1]*(1-self.exx_a)
 
 
 #         if self.heg_mult:
