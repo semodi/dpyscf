@@ -18,12 +18,12 @@ basis = '6-311++G(3df,2pd)'
 # basis = '3-21G'
 
 
-#systems = [2, 113, 25, 18, 114, 0, 20, 26] #Training
+# systems = [113, 25, 18, 114, 0] #Training
 systems = [103, 14, 23, 5, 10, 79, 27, 105] #Validation
-systems = [5] #Validation
+# systems = [5] #Validation
 # systems = [103, 14]
 bh_systems = [1, 23, 60]
-bh_systems = [1]
+# bh_systems = [1]
 #bh_systems = [1]
 # systems = [50]
 atoms = read('../data/haunschild_g2/g2_97.traj',':')
@@ -69,14 +69,17 @@ def run_validate(nxc='MGGA_tmp', xc_type='nxc'):
         nxc.forward_old = nxc.forward
         nxc.forward = nxc.eval_grid_models
         traced = torch.jit.trace(nxc, torch.rand(100,9))
+       
+        exx_a = 0
+        if hasattr(nxc, 'exx_a'):
+            exx_a = nxc.exx_a.detach().numpy()
+        
+        if exx_a:
+            tmpmod += '0'
         try:
             os.mkdir(tmpmod)
         except FileExistsError:
             pass
-
-        exx_a = 0
-        if hasattr(nxc, 'exx_a'):
-            exx_a = nxc.exx_a.detach().numpy()
 
         torch.jit.save(traced, tmpmod + '/xc')
 
@@ -84,7 +87,7 @@ def run_validate(nxc='MGGA_tmp', xc_type='nxc'):
         nxc.train()
         nxc_type = 'nxc'
         if exx_a:
-            nxc = '{}*HF,'.format(exx_a[0]) + tmpmod
+            nxc = '{}*HF +'.format(exx_a[0]) + tmpmod
         else:
             nxc = tmpmod
 

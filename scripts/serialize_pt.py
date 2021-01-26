@@ -1,19 +1,18 @@
 import torch
-from net import *
+from dpyscf.net import *
 import os
 import sys
 import importlib
-from code_snapshot import get_scf
+
 
 
 
 DEVICE='cpu'
 torch.set_default_dtype(torch.double)
 
-# xc = get_scf(sys.argv[1]).xc
 
-xc = torch.load(path)
-xc.grid_models = xc.grid_models[0:1]
+
+xc = torch.load(sys.argv[1]).xc
 xc.evaluate()
 xc.forward = xc.eval_grid_models
 traced = torch.jit.trace(xc, torch.abs(torch.rand(100,9)))

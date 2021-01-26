@@ -10,6 +10,53 @@ from ase import Atoms
 from ase.io import read
 from .torch_routines import *
 
+def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu'):
+
+    if xctype == 'GGA':
+        x = XC_L(device=DEVICE,n_input=1, n_hidden=16, spin_scaling=True, use=[1], lob=True) # PBE_X
+        c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2])
+        xc_level = 2
+    elif xctype == 'MGGA':
+        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, spin_scaling=True, use=[1,2], lob=True) # PBE_X
+        c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3])
+        xc_level = 3
+    print("Loading pre-trained models from " + pretrain_loc)
+    x.load_state_dict(torch.load(pretrain_loc + '/x'))
+    c.load_state_dict(torch.load(pretrain_loc + '/c'))
+
+    if hyb_par:
+        try:
+            a = 1 - hyb_par
+            b = 1
+            d = hyb_par
+            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level )
+            scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
+
+            xc.add_exx_a(d)
+            xc.exx_a.requires_grad=True
+
+            if path:
+                xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+
+        except RuntimeError:
+            a = 1 - hyb_par
+            b = 1
+            d = hyb_par
+            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, exx_a=d)
+            scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
+            print(xc.exx_a)
+            if path:
+                xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+            xc.exx_a.requires_grad=True
+            print(xc.exx_a)
+    else:
+        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level)
+        scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
+        if path:
+            xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+
+    scf.xc.train()
+    return scf
 
 epsilon=0
 class Reduce(torch.nn.Module):
@@ -48,7 +95,7 @@ def get_M(basis):
 class XC(torch.nn.Module):
 
     def __init__(self, grid_models=None, nxc_models=None, heg_mult=True, pw_mult=True,
-                    level = 1, model_mult=[], exx_a=None):
+                    level = 1, exx_a=None):
         super().__init__()
         self.grid_models = None
         self.nxc_models = None
@@ -59,7 +106,8 @@ class XC(torch.nn.Module):
         self.training = True
         self.level = level
         self.epsilon = 1e-7
-        self.loge = 1e-3
+        self.loge = 1e-8
+#         self.loge = 1e-3
         self.s_gam = 1
 
         if heg_mult:
@@ -72,14 +120,16 @@ class XC(torch.nn.Module):
         if nxc_models:
             if not isinstance(nxc_models, list): grid_models = [nxc_models]
             self.nxc_models = torch.nn.ModuleList(nxc_models)
-        if model_mult:
-            assert len(model_mult) == len(grid_models)
-            self.register_buffer('model_mult',torch.Tensor(model_mult))
-        else:
-            self.model_mult = [1 for m in self.grid_models]
+#         if model_mult:
+#             assert len(model_mult) == len(grid_models)
+#             self.register_buffer('model_mult',torch.Tensor(model_mult))
+#         else:
+        self.model_mult = [1 for m in self.grid_models]
         if exx_a is not None:
             self.register_buffer('exx_a', torch.Tensor([exx_a]))
-
+        else:
+#             self.register_buffer('exx_a', torch.Tensor([0]))
+            self.exx_a = 0
     def evaluate(self):
         self.training=False
     def train(self):
@@ -90,7 +140,7 @@ class XC(torch.nn.Module):
         self.register_buffer('model_mult',torch.Tensor(model_mult))
 
     def add_exx_a(self, exx_a):
-        self.register_buffer('exx_a', torch.Tensor([exx_a]))
+        self.exx_a = torch.Tensor([exx_a])
 
 
     def get_descriptors(self, rho0_a, rho0_b, gamma_a, gamma_b, gamma_ab, tau_a, tau_b, spin_scaling = False):
@@ -176,13 +226,20 @@ class XC(torch.nn.Module):
                 ao_eval = self.ao_eval.unsqueeze(0)
             else:
                 ao_eval = self.ao_eval
+
+            if self.training:
+                noise = torch.abs(torch.randn(dm.size(),device=dm.device)*1e-8)
+                noise = noise + torch.transpose(noise,-1,-2)
+            else:
+                noise = torch.zeros_like(dm)
+#                 dm += noise
 #             rho = .5*(torch.einsum('ij,xik,jk->xi', self.ao_eval[0], self.ao_eval, dm) +
 #                   torch.einsum('xij,ik,jk->xi', self.ao_eval, self.ao_eval[0], dm))
-            rho = torch.einsum('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm )
+            rho = torch.einsum('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm + noise )
             if dm1 is None:
                 dm1 = dm
 
-            rho2 = torch.einsum('xij,yik,...jk->xy...i', ao_eval[1:], ao_eval[1:], dm1)
+            rho2 = torch.einsum('xij,yik,...jk->xy...i', ao_eval[1:], ao_eval[1:], dm1 + noise)
 #             rho2 = rho[1:,1:,...]
 #             if self.training:
 #                 noise = torch.abs(torch.randn(rho[:,:,0].size(),device=rho.device)*1e-8)
@@ -206,11 +263,6 @@ class XC(torch.nn.Module):
                 rho0_a = rho0_b = rho0*0.5
                 gamma_a=gamma_b=gamma_ab= torch.einsum('ij,ij->j',drho[:],drho[:])*0.25
                 tau_a = tau_b = tau*0.5
-
-            if self.training:
-                noise = torch.abs(torch.randn(rho0_a.size(),device=rho.device)*1e-8)
-                rho0_a += noise
-                rho0_b += noise
 
             exc = self.eval_grid_models(torch.cat([rho0_a.unsqueeze(-1),
                                                     rho0_b.unsqueeze(-1),
@@ -255,7 +307,7 @@ class XC(torch.nn.Module):
 
         if self.grid_models:
 
-            for grid_model, m in zip(self.grid_models, self.model_mult):
+            for grid_model in self.grid_models:
                 if not grid_model.spin_scaling:
                     if not 'c' in descr_dict:
                         descr_dict['c'] = self.get_descriptors(rho0_a, rho0_b, gamma_a, gamma_b,
@@ -282,18 +334,18 @@ class XC(torch.nn.Module):
 
 
                     if self.heg_mult:
-                        exc_a += (1 + exc[0])*self.heg_model(2*rho0_a)*m
+                        exc_a += (1 + exc[0])*self.heg_model(2*rho0_a)*(1-self.exx_a)
                     else:
-                        exc_a += exc[0]*m
+                        exc_a += exc[0]*(1-self.exx_a)
 
                     if torch.all(rho0_b == torch.zeros_like(rho0_b)): #Otherwise produces NaN's
                         exc_b += exc[0]*0
 #                         print("hydrogen")
                     else:
                         if self.heg_mult:
-                            exc_b += (1 + exc[1])*self.heg_model(2*rho0_b)*m
+                            exc_b += (1 + exc[1])*self.heg_model(2*rho0_b)*(1-self.exx_a)
                         else:
-                            exc_b += exc[1]*m
+                            exc_b += exc[1]*(1-self.exx_a)
 
         else:
             if self.heg_mult:

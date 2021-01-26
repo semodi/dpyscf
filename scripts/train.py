@@ -72,9 +72,9 @@ def get_scf(path=args.modelpath):
 
     if HYBRID:
         try:
-            a = 0.75
+            a = 1- args.hyb_par
             b = 1
-            d = 0.25
+            d = args.hyb_par
             xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, model_mult=[] )
             scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
 
@@ -86,9 +86,9 @@ def get_scf(path=args.modelpath):
             xc.model_mult.requires_grad=True
             xc.exx_a.requires_grad=True
         except RuntimeError:
-            a = 0.75
+            a = 1 - args.hyb_par
             b = 1
-            d = 0.25
+            d = args.hyb_par
             xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, model_mult=[a, b],exx_a=d)
             scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
 
@@ -137,9 +137,11 @@ if __name__ == '__main__':
     indices = np.arange(len(atoms)).tolist()
 
     if args.type == 'GGA':
-        pop = [12, 7,  5] # (Hybrid GGA)
+        pop = [12, 8, 7,  5, 4]
+        if HYBRID:
+             pop = [12, 8, 7,  5, 4, 2] # (Hybrid GGA)
     else:
-        pop = [21, 12, 11, 10, 8, 7, 5, 4, 1] # (Meta-GGA)
+        pop = [21, 12, 11, 10, 8, 7, 5, 4, 0] # (Meta-GGA)
 
     # pop = []
     [atoms.pop(i) for i in pop]
@@ -258,7 +260,7 @@ if __name__ == '__main__':
                     loss = 0
                     for idx, data in enumerate(dataloader_train):
                         if not idx in molecules[molecule]: continue
-                        print(atoms[idx])
+                        if args.print_names: print(atoms[idx])
                         dm_init, matrices, e_ref, dm_ref = data
                         dm_init = dm_init.to(DEVICE)
                         e_ref = e_ref.to(DEVICE)
@@ -314,6 +316,7 @@ if __name__ == '__main__':
                     optimizer, scheduler = get_optimizer(scf, logpath + '_{}.adam.chkpt'.format(chkpt_idx%3))
                 scf.xc.train()
                 error_cnt +=1
+#                 chkpt_idx += 1
                 if error_cnt > 3:
                     print('NaNs could not be resolved by rolling back to checkpoint')
                     raise RuntimeError('NaNs could not be resolved by rolling back to checkpoint')

@@ -28,7 +28,6 @@ if __name__ == '__main__':
 
     RHO_mult = args['rho_weight']
     while(True):
-        print('Waiting for new model ...')
 #         paths = [logpath + '_{}.chkpt'.format(i) for i in range(3)]
         paths = [logpath + '_current.pt'.format(i) for i in range(3)]
         times = {}
@@ -41,7 +40,7 @@ if __name__ == '__main__':
             last_time = max(times)
             path = times[max(times)]
         else:
-            time.sleep(1)
+            time.sleep(10)
             continue
 
         try:
@@ -51,8 +50,9 @@ if __name__ == '__main__':
         except:
             line = '\n'
 
-
+        time.sleep(5)
         print('Calculating validation set for ' + path)
+        
         scf = torch.load(path)
 
         ae_error, rho_error = run_validate(scf.xc)

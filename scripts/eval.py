@@ -4,7 +4,7 @@ from ase.units import Hartree,kcal,mol
 kcalpmol = kcal/mol
 import sys
 
-ref = np.array([a.get_potential_energy()/Hartree for a in read('../haunschild_g2/g2_97.traj',':')])
+ref = np.array([a.get_potential_energy()/Hartree for a in read('../data/haunschild_g2/g2_97.traj',':')])
 pred = -np.load(sys.argv[1] + '_g2_ae.npy')
 
 skip = [15, 58, 83, 2, 25, 113, 18]
@@ -37,7 +37,7 @@ import pickle
 from dpyscf.utils import get_rho
 
 
-atoms = read('../haunschild_g2/g2_97.traj',':')
+atoms = read('../data/haunschild_g2/g2_97.traj',':')
 with open(sys.argv[1] + '_g2.dm','rb') as file:
     dms_pred = pickle.load(file)
 errors = []
@@ -61,11 +61,11 @@ for a_idx, a in enumerate(atoms):
         
     mf = dft.UKS(mol)
     mf.xc = 'PBE'
-    mf.grids.level = 5
+    mf.grids.level = 7
     mf.grids.build()
 
     dm = dms_pred[a_idx]
-    dm_ref = np.load('ccsdt/{}.dm.npy'.format(a_idx))
+    dm_ref = np.load('../data/ccsdt/{}.dm.npy'.format(a_idx))
     
 #     for s in [0,1]:
     rho_ref = get_rho(mf,mol,np.sum(dm_ref, axis=0), mf.grids)
