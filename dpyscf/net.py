@@ -14,7 +14,7 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu'):
 
     if xctype == 'GGA':
         x = XC_L(device=DEVICE,n_input=1, n_hidden=16, spin_scaling=True, use=[1], lob=True) # PBE_X
-        c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2])
+        c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=True)
         xc_level = 2
     elif xctype == 'MGGA':
         x = XC_L(device=DEVICE,n_input=2, n_hidden=16, spin_scaling=True, use=[1,2], lob=True) # PBE_X
@@ -318,7 +318,7 @@ class XC(torch.nn.Module):
                                       grid_coords = self.grid_coords,
                                       edge_index = self.edge_index)
                     if self.pw_mult:
-                        exc_ab += (1 + exc)*m*self.pw_model(rs, zeta)
+                        exc_ab += (1 + exc)*self.pw_model(rs, zeta)
                     else:
                         exc_ab += exc
                 else:
@@ -388,17 +388,7 @@ class C_L(torch.nn.Module):
             self.use = torch.Tensor(np.arange(n_input)).long().to(device)
         else:
             self.use = torch.Tensor(use).long().to(device)
-        self.net =  torch.nn.Sequential(
-                torch.nn.Linear(len(use), n_hidden),
-                torch.nn.GELU(),
-                torch.nn.Linear(n_hidden, n_hidden),
-                torch.nn.GELU(),
-                torch.nn.Linear(n_hidden, n_hidden),
-                torch.nn.GELU(),
-                torch.nn.Linear(n_hidden, 1),
-                torch.nn.Softplus()
-            ).double().to(device)
-        self.gate = torch.nn.Sequential(
+        self.net = torch.nn.Sequential(
                 torch.nn.Linear(n_input, n_hidden),
                 torch.nn.GELU(),
                 torch.nn.Linear(n_hidden, n_hidden),
@@ -414,7 +404,7 @@ class C_L(torch.nn.Module):
     def forward(self, rho, **kwargs):
 
         # squeezed = -self.net(rho[...,self.use]).squeeze()*self.gate(rho).squeeze()
-        squeezed = -self.gate(rho).squeeze()
+        squeezed = -self.net(rho).squeeze()
         if self.ueg_limit:
             # ueg_lim = rho[...,self.use[0]]
             ueg_lim = self.tanh(rho[...,self.use[0]])
