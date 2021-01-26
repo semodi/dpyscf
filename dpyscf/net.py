@@ -13,11 +13,11 @@ from .torch_routines import *
 def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu'):
 
     if xctype == 'GGA':
-        x = XC_L(device=DEVICE,n_input=1, n_hidden=16, spin_scaling=True, use=[1], lob=True) # PBE_X
+        x = XC_L(device=DEVICE,n_input=1, n_hidden=16, spin_scaling=True, use=[1], lob=1.804) # PBE_X
         c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=True)
         xc_level = 2
     elif xctype == 'MGGA':
-        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, spin_scaling=True, use=[1,2], lob=True) # PBE_X
+        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, spin_scaling=True, use=[1,2], lob=1.174) # PBE_X
         c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3])
         xc_level = 3
     print("Loading pre-trained models from " + pretrain_loc)
@@ -142,6 +142,72 @@ class XC(torch.nn.Module):
     def add_exx_a(self, exx_a):
         self.exx_a = torch.Tensor([exx_a])
 
+
+    def get_descriptors_pol(self, rho0_a, rho0_b, gamma_a, gamma_b, gamma_ab, tau_a, tau_b, spin_scaling = False):
+
+
+        uniform_factor = (3/10)*(3*np.pi**2)**(2/3)
+
+        def l_1(rho):
+            return rho**(1/3)
+
+        def l_2(rho, gamma):
+            return torch.sqrt(gamma)/(2*(3*np.pi**2)**(1/3)*rho**(4/3)+self.epsilon)
+
+        def l_3(rho, gamma, tau):
+            return (tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon)
+
+        if not spin_scaling:
+            zeta = (rho0_a - rho0_b)/(rho0_a + rho0_b + self.epsilon)
+            spinscale = 0.5*((1+zeta)**(4/3) + (1-zeta)**(4/3)) # zeta
+
+        if self.level > 0:
+            if spin_scaling:
+                # descr1 = torch.log((2*rho0_a)**(1/3) + self.loge)
+                descr1 = l_1(2*rho0_a)
+                # descr2 = torch.log((2*rho0_b)**(1/3) + self.loge)
+                descr2 = l_1(2*rho0_b)
+            else:
+                # descr1 = torch.log((rho0_a + rho0_b)**(1/3) + self.loge)# rho
+                assert False
+                descr1 = torch.log(l_1(rho0_a + rho0_b) + self.loge)# rho
+                descr2 = torch.log(spinscale) # zeta
+            descr = torch.cat([descr1.unsqueeze(-1), descr2.unsqueeze(-1)],dim=-1)
+        if self.level > 1:
+            if spin_scaling:
+                # descr3a = torch.sqrt(4*gamma_a)/(2*(3*np.pi**2)**(1/3)*(2*rho0_a)**(4/3)+self.epsilon) # s
+                descr3a = l_2(2*rho0_a, 4*gamma_a) # s
+                # descr3b = torch.sqrt(4*gamma_b)/(2*(3*np.pi**2)**(1/3)*(2*rho0_b)**(4/3) +self.epsilon) # s
+                descr3b = l_2(2*rho0_b, 4*gamma_b) # s
+                descr3 = torch.cat([descr3a.unsqueeze(-1), descr3b.unsqueeze(-1)],dim=-1)
+                # descr3 = (1-torch.exp(-descr3**2/self.s_gam))*torch.log(descr3 + 1)
+            else:
+                # descr3 = torch.sqrt(gamma_a + gamma_b + 2*gamma_ab)/(2*(3*np.pi**2)**(1/3)*(rho0_a + rho0_b)**(4/3)+self.epsilon) # s
+                descr3 = l_2(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab) # s
+                descr3 = descr3/((1+zeta)**(2/3) + (1-zeta)**2/3)
+                descr3 = descr3.unsqueeze(-1)
+                descr3 = (1-torch.exp(-descr3**2/self.s_gam))*torch.log(descr3 + 1)
+            descr = torch.cat([descr, descr3],dim=-1)
+        if self.level == 3:
+            if spin_scaling:
+                # descr4a = (2*tau_a - 4*gamma_a/(16*(rho0_a+self.epsilon)))/(uniform_factor*(2*rho0_a)**(5/3)+self.epsilon)
+                descr4a = l_3(2*rho0_a, 4*gamma_a, 2*tau_a)
+                # descr4b = (2*tau_b - 4*gamma_b/(16*(rho0_b+self.epsilon)))/(uniform_factor*(2*rho0_b)**(5/3)+self.epsilon)
+                descr4b = l_3(2*rho0_b, 4*gamma_b, 2*tau_b)
+                descr4 = torch.cat([descr4a.unsqueeze(-1), descr4b.unsqueeze(-1)],dim=-1)
+                descr4 = descr4**3/(descr4**2+self.epsilon)
+            else:
+                # descr4 = (tau_a + tau_b - (gamma_a + gamma_b+2*gamma_ab)/(8*(rho0_a + rho0_b + self.epsilon)))/(self.epsilon+(rho0_a + rho0_b)**(5/3)*((1+zeta)**(5/3) + (1-zeta)**(5/3))) # tau
+                descr4 = l_3(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab, tau_a + tau_b)
+                descr4 = descr4/((1+zeta)**(5/3) + (1-zeta)**(5/3))
+                descr4 = descr4**3/(descr4**2+self.epsilon)
+                descr4 = descr4.unsqueeze(-1)
+            descr4 = torch.log((descr4 + 1)/2)
+            descr = torch.cat([descr, descr4],dim=-1)
+        if spin_scaling:
+            descr = descr.view(descr.size()[0],-1,2).permute(2,0,1)
+
+        return descr
 
     def get_descriptors(self, rho0_a, rho0_b, gamma_a, gamma_b, gamma_ab, tau_a, tau_b, spin_scaling = False):
 
