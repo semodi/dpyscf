@@ -169,9 +169,8 @@ class XC(torch.nn.Module):
                 descr2 = l_1(2*rho0_b)
             else:
                 # descr1 = torch.log((rho0_a + rho0_b)**(1/3) + self.loge)# rho
-                assert False
-                descr1 = torch.log(l_1(rho0_a + rho0_b) + self.loge)# rho
-                descr2 = torch.log(spinscale) # zeta
+                descr1 = l_1(rho0_a)# rho
+                descr2 = l_1(rho0_b)# rho
             descr = torch.cat([descr1.unsqueeze(-1), descr2.unsqueeze(-1)],dim=-1)
         if self.level > 1:
             if spin_scaling:
@@ -183,12 +182,13 @@ class XC(torch.nn.Module):
                 # descr3 = (1-torch.exp(-descr3**2/self.s_gam))*torch.log(descr3 + 1)
             else:
                 # descr3 = torch.sqrt(gamma_a + gamma_b + 2*gamma_ab)/(2*(3*np.pi**2)**(1/3)*(rho0_a + rho0_b)**(4/3)+self.epsilon) # s
-                descr3 = l_2(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab) # s
-                descr3 = descr3/((1+zeta)**(2/3) + (1-zeta)**2/3)
-                descr3 = descr3.unsqueeze(-1)
-                descr3 = (1-torch.exp(-descr3**2/self.s_gam))*torch.log(descr3 + 1)
+                descr3a = l_2(rho0_a, gamma_a) # s
+                # descr3b = torch.sqrt(4*gamma_b)/(2*(3*np.pi**2)**(1/3)*(2*rho0_b)**(4/3) +self.epsilon) # s
+                descr3b = l_2(rho0_b, gamma_b) # s
+                descr3 = torch.cat([descr3a.unsqueeze(-1), descr3b.unsqueeze(-1)],dim=-1)
             descr = torch.cat([descr, descr3],dim=-1)
         if self.level == 3:
+            assert False
             if spin_scaling:
                 # descr4a = (2*tau_a - 4*gamma_a/(16*(rho0_a+self.epsilon)))/(uniform_factor*(2*rho0_a)**(5/3)+self.epsilon)
                 descr4a = l_3(2*rho0_a, 4*gamma_a, 2*tau_a)
@@ -363,6 +363,8 @@ class XC(torch.nn.Module):
 
         zeta = (rho0_a - rho0_b)/(rho0_a + rho0_b + 1e-8)
         rs = (4*np.pi/3*(rho0_a+rho0_b + 1e-8))**(-1/3)
+        rs_a = (4*np.pi/3*(rho0_a + 1e-8))**(-1/3)
+        rs_b = (4*np.pi/3*(rho0_b + 1e-8))**(-1/3)
         exc_a = torch.zeros_like(rho0_a)
         exc_b = torch.zeros_like(rho0_a)
         exc_ab = torch.zeros_like(rho0_a)
@@ -370,7 +372,7 @@ class XC(torch.nn.Module):
         spinscale = 0.5*((1+zeta)**(4/3) + (1-zeta)**(4/3)) # zeta
 
         descr_dict = {}
-
+        rho_tot = rho0_a + rho0_b
         if self.grid_models:
 
             for grid_model in self.grid_models:
@@ -383,10 +385,20 @@ class XC(torch.nn.Module):
                     exc = grid_model(descr,
                                       grid_coords = self.grid_coords,
                                       edge_index = self.edge_index)
-                    if self.pw_mult:
-                        exc_ab += (1 + exc)*self.pw_model(rs, zeta)
+
+                    if exc.dim() == 2: #If using spin decomposition
+                        pw_alpha = self.pw_models(rs_a, torch.ones_like(rs_a))
+                        pw_beta = self.pw_models(rs_b, torch.ones_like(rs_b))
+                        pw = self.pw_models(rs, zeta)
+                        ec_alpha = (1 + exc[:,0])*pw_alpha*rho0_a/rho_tot
+                        ec_beta =  (1 + exc[:,1])*pw_beta*rho0_b/rho_tot
+                        ec_mixed = (1 + exc[:,2])*(pw*rho_tot - pw_alpha*rho0_a - pw_beta*rho_b)/rho_tot
+                        exc_ab = ec_alpha + ec_beta + ec_mixed
                     else:
-                        exc_ab += exc
+                        if self.pw_mult:
+                            exc_ab += (1 + exc)*self.pw_model(rs, zeta)
+                        else:
+                            exc_ab += exc
                 else:
                     if not 'x' in descr_dict:
                         descr_dict['x'] = self.get_descriptors(rho0_a, rho0_b, gamma_a, gamma_b,
@@ -420,7 +432,6 @@ class XC(torch.nn.Module):
             if self.pw_mult:
                 exc_ab = self.pw_model(rs, zeta)
 
-        rho_tot = rho0_a + rho0_b
         exc = rho0_a/rho_tot*exc_a + rho0_b/rho_tot*exc_b + exc_ab
 
         return exc.unsqueeze(-1)
@@ -466,7 +477,7 @@ class C_L(torch.nn.Module):
             ).double().to(device)
         self.sig = torch.nn.Sigmoid()
         self.tanh = torch.nn.Tanh()
-
+        self.lobf = LOB(2.0)
     def forward(self, rho, **kwargs):
 
         # squeezed = -self.net(rho[...,self.use]).squeeze()*self.gate(rho).squeeze()
@@ -479,10 +490,75 @@ class C_L(torch.nn.Module):
             else:
                 ueg_lim_a = 0
 
-            return squeezed*(ueg_lim+ueg_lim_a)
+            return -self.lobf(-squeezed*(ueg_lim+ueg_lim_a))
 
         else:
-            return squeezed
+            return -self.lobf(-squeezed)
+
+class XC_L_POL(torch.nn.Module):
+
+    def __init__(self, max_order=4, device='cpu', spin_scaling=True, lob=1.804, use=[]):
+        super().__init__()
+        self.spin_scaling = spin_scaling
+        self.lob = lob
+        self.lobf = LOB(lob)
+        self.n_input = len(use)
+        self.n_freepar = (max_order+1)**self.n_input - 1
+        self.pars = torch.nn.Linear(self.n_freepar, 1, bias=False)
+        self.max_order = max_order
+        self.use = use
+        self.gamma_s = torch.nn.Parameter(torch.Tensor([0.2730])) #PBE parameters
+        # self.pars.weight.data.fill_(([0.804]+[0]*(self.n_freepar-1))) # PBE parameters
+        self.gamma_s.requires_grad=True
+
+    def gen_features(self, inp):
+
+        if self.n_input == 1:
+            inp = (self.gamma_s*inp**2)/(1+self.gamma_s*inp**2)
+            return torch.cat([inp**i for i in range(1, self.max_order+1)],dim=-1)
+        elif self.input == 2:
+            assert False
+        else:
+            assert False
+
+    def forward(self, rho, **kwargs):
+        inp = self.gen_features(rho[...,self.use])
+        return self.pars(inp).squeeze()
+
+class C_L_POL(torch.nn.Module):
+
+    def __init__(self, max_order=4, device='cpu',lob=1.804, use=[]):
+        super().__init__()
+        self.lob = lob
+        self.lobf = LOB(lob)
+        self.n_input = int(len(use)/2)
+        self.n_freepar = (max_order+1)**self.n_input - 1
+        self.pars_ss = torch.nn.Linear(self.n_freepar, 1, bias=False)
+        self.pars_os = torch.nn.Linear(self.n_freepar, 1, bias=False)
+        self.max_order = max_order
+        self.use = use
+        self.gamma_s = torch.nn.Parameter(torch.Tensor([0.2730])) #PBE parameters
+        # self.pars.weight.data.fill_(([0.804]+[0]*(self.n_freepar-1))) # PBE parameters
+        self.gamma_s.requires_grad=True
+
+    def gen_features(self, inp):
+
+        if self.n_input == 1:
+            inp_ss = (self.gamma_s*inp**2)/(1+self.gamma_s*inp**2)
+            os = inp[:,0:1]**2 + inp[:,1:2]**2
+            inp_os = (self.gamma_s*os)/(1+self.gamma_s*os)
+            return (torch.stack([inp_ss**i for i in range(1, self.max_order+1)],dim=-1),
+                    torch.cat([inp_os**i for i in range(1, self.max_order+1)],dim=-1))
+        elif self.input == 2:
+            assert False
+        else:
+            assert False
+
+    def forward(self, rho, **kwargs):
+        inp_ss, inp_os = self.gen_features(rho[...,self.use])
+        e_ss = torch.sum(self.pars_ss(inp_ss),dim=-1)
+        e_os = self.pars_ss(inp_os).squeeze()
+
 
 class XC_L(torch.nn.Module):
     def __init__(self, n_input=2,n_hidden=16, device='cpu', spin_scaling=False, lob=1.804, use=[]):
