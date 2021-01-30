@@ -106,7 +106,7 @@ class XC(torch.nn.Module):
         self.training = True
         self.level = level
         self.epsilon = 1e-7
-        self.loge = 1e-8
+        self.loge = 1e-5
 #         self.loge = 1e-3
         self.s_gam = 1
 
@@ -126,7 +126,7 @@ class XC(torch.nn.Module):
 #         else:
         self.model_mult = [1 for m in self.grid_models]
         if exx_a is not None:
-            self.register_buffer('exx_a', torch.Tensor([exx_a]))
+            self.exx_a = torch.nn.Parameter(torch.Tensor([exx_a]))
         else:
 #             self.register_buffer('exx_a', torch.Tensor([0]))
             self.exx_a = 0
@@ -140,7 +140,7 @@ class XC(torch.nn.Module):
         self.register_buffer('model_mult',torch.Tensor(model_mult))
 
     def add_exx_a(self, exx_a):
-        self.exx_a = torch.Tensor([exx_a])
+        self.exx_a = torch.nn.Parameter(torch.Tensor([exx_a]))
 
 
     def get_descriptors_pol(self, rho0_a, rho0_b, gamma_a, gamma_b, gamma_ab, tau_a, tau_b, spin_scaling = False):
