@@ -95,8 +95,9 @@ def get_M(basis):
 class XC(torch.nn.Module):
 
     def __init__(self, grid_models=None, nxc_models=None, heg_mult=True, pw_mult=True,
-                    level = 1, exx_a=None):
+                    level = 1, exx_a=None, polynomial=False):
         super().__init__()
+        self.polynomial = polynomial
         self.grid_models = None
         self.nxc_models = None
         self.heg_mult = heg_mult
@@ -372,6 +373,11 @@ class XC(torch.nn.Module):
         exc_ab = torch.zeros_like(rho0_a)
 
         spinscale = 0.5*((1+zeta)**(4/3) + (1-zeta)**(4/3)) # zeta
+        if self.polynomial:
+            descr_method = self.get_descriptors_pol
+        else:
+            descr_method = self.get_descriptors
+
 
         descr_dict = {}
         rho_tot = rho0_a + rho0_b
@@ -380,7 +386,9 @@ class XC(torch.nn.Module):
             for grid_model in self.grid_models:
                 if not grid_model.spin_scaling:
                     if not 'c' in descr_dict:
-                        descr_dict['c'] = self.get_descriptors(rho0_a, rho0_b, gamma_a, gamma_b,
+                        descr_dict['c'] = descr_method(rho0_a, rho0_b, gamma_a, gamma_b,
+                                                                         gamma_ab, tau_a, tau_b, spin_scaling = False)
+                        descr_dict['c'] = descr_method(rho0_a, rho0_b, gamma_a, gamma_b,
                                                                          gamma_ab, tau_a, tau_b, spin_scaling = False)
                     descr = descr_dict['c']
 
@@ -389,12 +397,12 @@ class XC(torch.nn.Module):
                                       edge_index = self.edge_index)
 
                     if exc.dim() == 2: #If using spin decomposition
-                        pw_alpha = self.pw_models(rs_a, torch.ones_like(rs_a))
-                        pw_beta = self.pw_models(rs_b, torch.ones_like(rs_b))
-                        pw = self.pw_models(rs, zeta)
+                        pw_alpha = self.pw_model(rs_a, torch.ones_like(rs_a))
+                        pw_beta = self.pw_model(rs_b, torch.ones_like(rs_b))
+                        pw = self.pw_model(rs, zeta)
                         ec_alpha = (1 + exc[:,0])*pw_alpha*rho0_a/rho_tot
                         ec_beta =  (1 + exc[:,1])*pw_beta*rho0_b/rho_tot
-                        ec_mixed = (1 + exc[:,2])*(pw*rho_tot - pw_alpha*rho0_a - pw_beta*rho_b)/rho_tot
+                        ec_mixed = (1 + exc[:,2])*(pw*rho_tot - pw_alpha*rho0_a - pw_beta*rho0_b)/rho_tot
                         exc_ab = ec_alpha + ec_beta + ec_mixed
                     else:
                         if self.pw_mult:
@@ -403,7 +411,7 @@ class XC(torch.nn.Module):
                             exc_ab += exc
                 else:
                     if not 'x' in descr_dict:
-                        descr_dict['x'] = self.get_descriptors(rho0_a, rho0_b, gamma_a, gamma_b,
+                        descr_dict['x'] = descr_method(rho0_a, rho0_b, gamma_a, gamma_b,
                                                                          gamma_ab, tau_a, tau_b, spin_scaling = True)
                     descr = descr_dict['x']
 
@@ -506,11 +514,11 @@ class XC_L_POL(torch.nn.Module):
         self.lobf = LOB(lob)
         self.n_input = len(use)
         self.n_freepar = (max_order+1)**self.n_input - 1
-        self.pars = torch.nn.Linear(self.n_freepar, 1, bias=False)
+        self.pars = torch.nn.Parameter(torch.Tensor([0.804] + [0.0]*(self.n_freepar-1)))
+        self.pars.requires_grad = True
         self.max_order = max_order
         self.use = use
         self.gamma_s = torch.nn.Parameter(torch.Tensor([0.2730])) #PBE parameters
-        # self.pars.weight.data.fill_(([0.804]+[0]*(self.n_freepar-1))) # PBE parameters
         self.gamma_s.requires_grad=True
 
     def gen_features(self, inp):
@@ -525,7 +533,10 @@ class XC_L_POL(torch.nn.Module):
 
     def forward(self, rho, **kwargs):
         inp = self.gen_features(rho[...,self.use])
-        return self.pars(inp).squeeze()
+        # pars = torch.abs(self.pars)
+        pars = self.pars/torch.sum(self.pars)*(self.lob-1)
+        results = torch.einsum('i,...i', pars, inp)
+        return results.squeeze()
 
 class C_L_POL(torch.nn.Module):
 
@@ -570,9 +581,11 @@ class C_L_POL(torch.nn.Module):
 
     def forward(self, rho, **kwargs):
         inp_ss, inp_os = self.gen_features(rho[...,self.use])
-        pars_ss = torch.abs(self.pars_ss)
+        # pars_ss = torch.abs(self.pars_ss)
+        pars_ss = self.pars_ss
         pars_ss = pars_ss/torch.sum(pars_ss)
-        pars_os = torch.abs(self.pars_os)
+        # pars_os = torch.abs(self.pars_os)
+        pars_os = self.pars_os
         pars_os = pars_os/torch.sum(pars_os)
         e_ss = torch.einsum('i,...i',pars_ss, inp_ss)
         e_os = torch.einsum('i,...i',pars_os, inp_os).unsqueeze(-1)
