@@ -10,11 +10,15 @@ from ase import Atoms
 from ase.io import read
 from .torch_routines import *
 
-def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu'):
+def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=False):
 
     if xctype == 'GGA':
-        x = XC_L(device=DEVICE,n_input=1, n_hidden=16, spin_scaling=True, use=[1], lob=1.804) # PBE_X
-        c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=True)
+        if polynomial:
+            x = XC_L_POL(device=DEVICE, max_order=3, spin_scaling=True, use=[1], lob=1.804)
+            c = C_L_POL(device=DEVICE, max_order=8,  use=[0, 1, 2, 3])
+        else:
+            x = XC_L(device=DEVICE,n_input=1, n_hidden=16, spin_scaling=True, use=[1], lob=1.804) # PBE_X
+            c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=True)
         xc_level = 2
     elif xctype == 'MGGA':
         x = XC_L(device=DEVICE,n_input=2, n_hidden=16, spin_scaling=True, use=[1,2], lob=1.174) # PBE_X
@@ -54,7 +58,9 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu'):
         scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
         if path:
             xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+    
 
+    xc.polynomial=polynomial
     scf.xc.train()
     return scf
 
