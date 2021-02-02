@@ -513,25 +513,28 @@ class C_L(torch.nn.Module):
 
 class XC_L_POL(torch.nn.Module):
 
-    def __init__(self, max_order=4, device='cpu', spin_scaling=True, lob=1.804, use=[]):
+    def __init__(self, max_order=4, device='cpu', ueg_limit=True, lob=1.804, use=[]):
         super().__init__()
-        self.spin_scaling = spin_scaling
+        self.spin_scaling = True
         self.lob = lob
-        self.lobf = LOB(lob)
         self.n_input = len(use)
-        self.n_freepar = (max_order+1)**self.n_input - 1
-        self.pars = torch.nn.Parameter(torch.Tensor([0.804] + [0.0]*(self.n_freepar-1)))
+        if ueg_limit:
+            self.n_freepar = (max_order+1)**self.n_input - 1
+            self.pars = torch.nn.Parameter(torch.Tensor([0.804] + [0.0]*(self.n_freepar-1)))
+        else:
+            self.n_freepar = (max_order+1)**self.n_input
+            self.pars = torch.nn.Parameter(torch.Tensor([0.0, 0.804] + [0.0]*(self.n_freepar - 2)))
         self.pars.requires_grad = True
         self.max_order = max_order
         self.use = use
         self.gamma_s = torch.nn.Parameter(torch.Tensor([0.2730])) #PBE parameters
         self.gamma_s.requires_grad=True
+        self.min_power = 1 if ueg_limit else 0
 
     def gen_features(self, inp):
-
         if self.n_input == 1:
             inp = (self.gamma_s*inp**2)/(1+self.gamma_s*inp**2)
-            return torch.cat([inp**i for i in range(1, self.max_order+1)],dim=-1)
+            return torch.cat([inp**i for i in range(self.min_power, self.max_order+1)],dim=-1)
         elif self.input == 2:
             assert False
         else:
@@ -540,19 +543,23 @@ class XC_L_POL(torch.nn.Module):
     def forward(self, rho, **kwargs):
         inp = self.gen_features(rho[...,self.use])
         # pars = torch.abs(self.pars)
-        pars = self.pars/torch.sum(self.pars)*(self.lob-1)
+        if self.lob:
+            pars = self.pars/torch.sum(self.pars)*(self.lob-1)
+        else:
+            pars = self.pars
         results = torch.einsum('i,...i', pars, inp)
-        return results.squeeze()
+        return results.squeeze( )
 
 class C_L_POL(torch.nn.Module):
 
-    def __init__(self, max_order=4, device='cpu',lob=1.804, use=[]):
+    def __init__(self, max_order=4, device='cpu',ueg_limit=True, use=[]):
         super().__init__()
         self.spin_scaling = False
-        self.lob = lob
-        self.lobf = LOB(lob)
         self.n_input = int(len(use)/2)
-        self.n_freepar = (max_order)*(max_order+1)**(self.n_input - 1)
+        if ueg_limit:
+            self.n_freepar = (max_order)*(max_order+1)**(self.n_input - 1)
+        else:
+            self.n_freepar = (max_order+1)*(max_order+1)**(self.n_input - 1)
         # self.pars_ss = torch.nn.Linear(self.n_freepar, 1, bias=False)
         self.pars_ss = torch.nn.Parameter(torch.Tensor([0.1]*(self.n_freepar)))
         # self.pars_os = torch.nn.Linear(self.n_freepar, 1, bias=False)
@@ -564,26 +571,17 @@ class C_L_POL(torch.nn.Module):
         # self.pars.weight.data.fill_(([0.804]+[0]*(self.n_freepar-1))) # PBE parameters
         self.gamma_s.requires_grad=True
         self.gamma_rho.requires_grad=True
-
+        self.min_power = 1 if ueg_limit else 0
     def gen_features(self, inp):
 
-        if self.n_input == 1:
-            inp_ss = (torch.abs(self.gamma_s)*inp**2)/(1+torch.abs(self.gamma_s)*inp**2)
-            os = (inp[:,0:1]**2 + inp[:,1:2]**2)*.5
-            inp_os = (torch.abs(self.gamma_s)*os)/(1+torch.abs(self.gamma_s)*os)
-            return (torch.stack([inp_ss**i for i in range(1, self.max_order+1)],dim=-1),
-                    torch.cat([inp_os**i for i in range(1, self.max_order+1)],dim=-1))
-        elif self.n_input == 2:
-            inp_ss_s = (torch.abs(self.gamma_s)*inp[:,2:]**2)/(1+torch.abs(self.gamma_s)*inp[:,2:]**2)
-            inp_ss_rho = (torch.abs(self.gamma_rho)*inp[:,:2]**2)/(1+torch.abs(self.gamma_rho)*inp[:,:2]**2)
-            os_s = (inp[:,3:4]**2 + inp[:,2:3]**2)*.5
-            os_rho = (inp[:,0:1]**2 + inp[:,1:2]**2)*.5
-            inp_os_s = (torch.abs(self.gamma_s)*os_s)/(1+torch.abs(self.gamma_s)*os_s)
-            inp_os_rho = (torch.abs(self.gamma_rho)*os_rho)/(1+torch.abs(self.gamma_rho)*os_rho)
-            return (torch.stack([inp_ss_s**i*inp_ss_rho**j for i in range(1, self.max_order+1) for j in range(0, self.max_order+1)], dim=-1),
-                    torch.cat([inp_os_s**i*inp_os_rho**j for i in range(1, self.max_order+1) for j in range(0, self.max_order+1)], dim=-1))
-        else:
-            assert False
+        inp_ss_s = (torch.abs(self.gamma_s)*inp[:,2:]**2)/(1+torch.abs(self.gamma_s)*inp[:,2:]**2)
+        inp_ss_rho = (torch.abs(self.gamma_rho)*inp[:,:2]**2)/(1+torch.abs(self.gamma_rho)*inp[:,:2]**2)
+        os_s = (inp[:,3:4]**2 + inp[:,2:3]**2)*.5
+        os_rho = (inp[:,0:1]**2 + inp[:,1:2]**2)*.5
+        inp_os_s = (torch.abs(self.gamma_s)*os_s)/(1+torch.abs(self.gamma_s)*os_s)
+        inp_os_rho = (torch.abs(self.gamma_rho)*os_rho)/(1+torch.abs(self.gamma_rho)*os_rho)
+        return (torch.stack([inp_ss_s**i*inp_ss_rho**j for i in range(self.min_power, self.max_order+1) for j in range(0, self.max_order+1)], dim=-1),
+                torch.cat([inp_os_s**i*inp_os_rho**j for i in range(self.min_power, self.max_order+1) for j in range(0, self.max_order+1)], dim=-1))
 
     def forward(self, rho, **kwargs):
         inp_ss, inp_os = self.gen_features(rho[...,self.use])
@@ -600,9 +598,10 @@ class C_L_POL(torch.nn.Module):
 
 
 class XC_L(torch.nn.Module):
-    def __init__(self, n_input=2,n_hidden=16, device='cpu', spin_scaling=False, lob=1.804, use=[]):
+    def __init__(self, n_input=2,n_hidden=16, device='cpu', ueg_limit=False, lob=1.804, use=[]):
         super().__init__()
-        self.spin_scaling = spin_scaling
+        self.ueg_limit = ueg_limit
+        self.spin_scaling = True
         self.lob = lob
 
         if not use:
@@ -625,21 +624,23 @@ class XC_L(torch.nn.Module):
         self.shift = 1/(1+np.exp(-1e-3))
 
     def forward(self, rho, **kwargs):
-        if self.spin_scaling:
-            squeezed = self.net(rho[...,self.use]).squeeze()
+        squeezed = self.net(rho[...,self.use]).squeeze()
+        if self.ueg_limit:
             ueg_lim = rho[...,self.use[0]]
             # ueg_lim = self.tanh(rho[...,self.use[0]])
             if len(self.use) > 1:
                 ueg_lim_a = torch.pow(self.tanh(rho[...,self.use[1]]),2)
             else:
                 ueg_lim_a = 0
-            if self.lob:
-                return self.lobf(squeezed*(ueg_lim+ueg_lim_a))
-            else:
-                return squeezed*(ueg_lim+ueg_lim_a)
-
         else:
-            return (self.net(rho[...,self.use])).squeeze()
+            ueg_lim = 1
+            ueg_lim_a = 0
+
+        if self.lob:
+            return self.lobf(squeezed*(ueg_lim+ueg_lim_a))
+        else:
+            return squeezed*(ueg_lim+ueg_lim_a)
+
 
 class LOB(torch.nn.Module):
 
