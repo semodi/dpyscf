@@ -1,0 +1,85 @@
+import numpy as np
+import pyscf
+from pyscf import gto,dft,scf
+from pyscf.lib import num_threads
+import scipy
+from ase import Atoms
+from ase.io import read
+import pylibnxc
+import sys
+import pickle
+from dpyscf.losses import *
+basis = '6-311G*'
+
+# num_threads(1)
+try:
+    atoms = read('../data/haunschild_g2/g2_97.traj',':')
+except:
+    atoms = read('../../data/haunschild_g2/g2_97.traj',':')
+# systems = [103, 14, 23, 5, 10, 79, 27, 105] #Validation
+# atoms = [atoms[s] for s in systems]
+
+# systems = [103, 14] #Validation
+# atoms = [atoms[s] for s in systems]
+N = len(atoms)
+
+spins = {
+    'Al': 1,
+    'B' : 1,
+    'Li': 1,
+    'Na': 1,
+    'Si': 2 ,
+    'Be':0,
+    'C': 2,
+    'Cl': 1,
+    'F': 1,
+    'H': 1,
+    'N': 3,
+    'O': 2,
+    'P': 3,
+    'S': 2
+}
+atoms += [Atoms(a, info={'spin':spins[a]}) for a in np.unique([s for a in atoms for s in a.get_chemical_symbols() ])]
+
+energies_predicted = []
+atoms_predicted = {}
+energies_baseline = []
+pred_dict = {}
+dm_predicted = []
+grids = []
+mols = []
+spins = []
+for a in atoms:
+    print(a)
+    spin = a.info.get('spin', 0)
+
+    pos = a.positions
+#     if len(pos)==1:
+#         this_basis = '6-311++G'
+#     else:
+    this_basis = basis
+    spec = a.get_chemical_symbols()
+    mol_input = [[s, p] for s, p in zip(spec, pos)]
+    try:
+        mols = [gto.M(atom=mol_input, basis=this_basis,spin=0),
+               gto.M(atom=mol_input, basis=this_basis,spin=2)]
+               
+    except Exception:
+        spin =1
+        mols = [gto.M(atom=mol_input, basis=this_basis,spin=1)]
+
+    energies = []
+    spin_here = []
+    for mol in mols:
+        mol.verbose = 4
+
+        method = scf.UHF
+        mf = method(mol)
+        mf.kernel()
+        energies.append(mf.e_tot)
+        spin_here.append(mf.spin_square())
+        
+    spins.append(spin_here[np.argmin(energies)])
+    
+np.save('spin_square.npy', spins)
+

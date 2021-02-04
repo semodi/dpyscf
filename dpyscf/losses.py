@@ -32,7 +32,10 @@ def ae_loss(ref_dict,pred_dict, loss, **kwargs):
     pred = torch.cat(list(atomization_energies(pred_dict).values()))
     assert len(ref) == 1
     ref = ref.expand(pred.size()[0])
-    weights = kwargs.get('weights', torch.linspace(0,1,pred.size()[0])**2).to(pred.device)
+    if pred.size()[0] > 1:
+        weights = kwargs.get('weights', torch.linspace(0,1,pred.size()[0])**2).to(pred.device)
+    else:
+        weights = 1
     lae = loss((ref-pred)*weights,torch.zeros_like(pred))
     return lae
 

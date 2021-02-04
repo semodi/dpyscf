@@ -10,15 +10,20 @@ from ase import Atoms
 from ase.io import read
 from .torch_routines import *
 
-def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu'):
+def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=False, ueg_limit=True):
 
     if xctype == 'GGA':
-        x = XC_L(device=DEVICE,n_input=1, n_hidden=16, spin_scaling=True, use=[1], lob=1.804) # PBE_X
-        c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=True)
+        lob = 1.804 if ueg_limit else 0 
+        if polynomial:
+            x = XC_L_POL(device=DEVICE, max_order=3, use=[1], lob=lob, ueg_limit=ueg_limit)
+            c = C_L_POL(device=DEVICE, max_order=8,  use=[0, 1, 2, 3], ueg_limit=ueg_limit)
+        else:
+            x = XC_L(device=DEVICE,n_input=1, n_hidden=16, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
+            c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit)
         xc_level = 2
     elif xctype == 'MGGA':
-        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, spin_scaling=True, use=[1,2], lob=1.174) # PBE_X
-        c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3])
+        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=1.174, ueg_limit=ueg_limit) # PBE_X
+        c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit)
         xc_level = 3
     print("Loading pre-trained models from " + pretrain_loc)
     x.load_state_dict(torch.load(pretrain_loc + '/x'))
@@ -54,7 +59,9 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu'):
         scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
         if path:
             xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+    
 
+    xc.polynomial=polynomial
     scf.xc.train()
     return scf
 
@@ -107,7 +114,7 @@ class XC(torch.nn.Module):
         self.training = True
         self.level = level
         self.epsilon = 1e-7
-        self.loge = 1e-8
+        self.loge = 1e-5
 #         self.loge = 1e-3
         self.s_gam = 1
 
@@ -127,7 +134,7 @@ class XC(torch.nn.Module):
 #         else:
         self.model_mult = [1 for m in self.grid_models]
         if exx_a is not None:
-            self.register_buffer('exx_a', torch.Tensor([exx_a]))
+            self.exx_a = torch.nn.Parameter(torch.Tensor([exx_a]))
         else:
 #             self.register_buffer('exx_a', torch.Tensor([0]))
             self.exx_a = 0
@@ -141,7 +148,7 @@ class XC(torch.nn.Module):
         self.register_buffer('model_mult',torch.Tensor(model_mult))
 
     def add_exx_a(self, exx_a):
-        self.exx_a = torch.Tensor([exx_a])
+        self.exx_a = torch.nn.Parameter(torch.Tensor([exx_a]))
 
 
     def get_descriptors_pol(self, rho0_a, rho0_b, gamma_a, gamma_b, gamma_ab, tau_a, tau_b, spin_scaling = False):
