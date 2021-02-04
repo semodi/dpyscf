@@ -268,8 +268,8 @@ class XC(torch.nn.Module):
                 descr4 = descr4/((1+zeta)**(5/3) + (1-zeta)**(5/3))
                 descr4 = descr4**3/(descr4**2+self.epsilon)
                 descr4 = descr4.unsqueeze(-1)
-            # descr4 = torch.log((descr4 + 1)/2)
-            descr4 = torch.log(descr4 + self.loge)
+            descr4 = torch.log((descr4 + 1)/2)
+            # descr4 = torch.log(descr4 + self.loge)
             # descr4 = (descr4)/(1+descr4)-0.5
             descr = torch.cat([descr, descr4],dim=-1)
         if spin_scaling:
