@@ -167,23 +167,19 @@ class SCF(torch.nn.Module):
                 self.xc.edge_index = edge_index
                 self.xc.ml_ovlp = ml_ovlp
                 exc = self.xc(dm)
-                if scaling.ndim > 2:
-                    # ============= meta-GGA ==============
-                    vxc = self.xc.get_V(dm, scaling)
-                    self.vxc = vxc
+
+                
+                vxc = torch.autograd.functional.jacobian(self.xc, dm, create_graph=True)
+                if vxc.dim() > 2:
+                    vxc = torch.einsum('ij,xjk,kl->xil',L,vxc,L.T)
+                    vxc = vxc*scaling.unsqueeze(0)
+
                 else:
-                    # ============== GGA =================
-                    vxc = torch.autograd.functional.jacobian(self.xc, dm, create_graph=True)
-                    if vxc.dim() > 2:
-                        vxc = torch.einsum('ij,xjk,kl->xil',L,vxc,L.T)
-                        vxc = vxc*scaling.unsqueeze(0)
+                    vxc = torch.mm(L,torch.mm(vxc,L.T))
+                    vxc = vxc*scaling
 
-                    else:
-                        vxc = torch.mm(L,torch.mm(vxc,L.T))
-                        vxc = vxc*scaling
-
-                    if torch.sum(mo_occ) == 1:   # Otherwise H produces NaNs
-                        vxc[1] = torch.zeros_like(vxc[1])
+                if torch.sum(mo_occ) == 1:   # Otherwise H produces NaNs
+                    vxc[1] = torch.zeros_like(vxc[1])
             else:
                 exc=0
                 vxc=torch.zeros_like(veff)

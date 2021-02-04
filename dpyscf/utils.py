@@ -182,7 +182,7 @@ def gen_atomic_grids(mol, atom_grid={}, radi_method=radi.gauss_chebyshev,
             atom_grids_tab[symb] = coords, weights
     return atom_grids_tab
 
-def half_circle_scan(mf, mol, level, n_ang = 25):
+def half_circle(mf, mol, level, n_ang = 25):
 
     atom_grids_tab = gen_atomic_grids(mol,level=level,nang=n_ang)
 
@@ -200,51 +200,7 @@ def half_circle_scan(mf, mol, level, n_ang = 25):
     print('Number of grid points (level = {}, n_ang = {}):'.format(level,n_ang), len(pruned.weights))
     coords = pruned.coords
     weights = pruned.weights
-
-    coords2 = np.array(coords)
-    coords2 = coords2[:,[1,0,2]]
-
-    s = 1/np.sqrt(2)
-    coords3 = np.array(coords)
-    coords3 = coords3.dot(np.array([[s,s,0],[-s,s,0],[0,0,1]]))
     
-    c = np.sqrt(3)/2
-    s = 1/2
-    coords4 = np.array(coords)
-    coords4 = coords4.dot(np.array([[c,s,0],[-s,c,0],[0,0,1]]))
-    
-    coords = np.concatenate([coords,coords2, coords3, coords4])
-    weights = np.concatenate([weights, weights, weights, weights])/4
-    
-    return coords, weights
-
-def half_circle(n_rad = 100, n_ang = 70):
-    r, dr = radi.treutler_ahlrichs(n_rad)
-
-    phi, dphi = np.polynomial.legendre.leggauss(n_ang)
-    phi = np.arccos(phi)
-
-    x = np.outer(r, np.cos(phi)).flatten()
-    y = np.outer(r, np.sin(phi)).flatten()
-
-    dxy = np.outer(dr*r**2, dphi)
-
-    weights = (dxy*2*np.pi).flatten()
-#     coords = np.stack([y, 0*y, x],axis=-1)
-    coords = np.stack([y, 0*y, x],axis=-1)
-
-    return coords, weights
-
-def line(n_rad = 100, n_ang = 70):
-    r, dr = radi.treutler_ahlrichs(n_rad)
-
-
-    dxy = dr*r**2
-
-    weights = (dxy*4*np.pi).flatten()
-#     coords = np.stack([y, 0*y, x],axis=-1)
-    coords = np.stack([r*0, 0*r, r],axis=-1)
-
     return coords, weights
 
 def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
@@ -409,75 +365,72 @@ def get_rho(mf, mol, dm, grids):
     rho = mf._numint.eval_rho(mol, ao_eval, dm)
     return rho
 
-def get_L(mol, method):
+def get_m_mask(mol):
+    m_dict = {'s':0, 
+             'px':1, 'pz':0, 'py':-1,
+             'dxy':-2, 'dyz':-1, 'dz^2':0, 'dxz':1, 'dx2-y2':2,
+             'fy^3':-3, 'fxyz':-2, 'fyz^2':-1, 'fz^3':0, 'fxz^2':1, 'fzx^2':2, 'fx^3':3}
 
+    basis_m = [m_dict[l.split()[2][1:]] for l in mol.ao_labels()]
 
-    if method==half_circle:
-        pys = np.where(['py' in l for l in mol.ao_labels()])[0]
-        pxs = np.where(['px' in l for l in mol.ao_labels()])[0]
+    m_mask = np.ones([len(basis_m),len(basis_m)])
+    for i,m1 in enumerate(basis_m) :
+        for j,m2 in enumerate(basis_m):
+            if not m1 == m2:
+                m_mask[i,j] = 0 
+    return m_mask
 
-        dxys = np.where(['dxy' in l for l in mol.ao_labels()])[0]
-        dx2y2s = np.where(['dx2-y2' in l for l in mol.ao_labels()])[0]
-        dyzs = np.where(['dyz' in l for l in mol.ao_labels()])[0]
+def get_L(mol):
+    
+    pys = np.where(['py' in l for l in mol.ao_labels()])[0]
+    pxs = np.where(['px' in l for l in mol.ao_labels()])[0]
 
-        fx3s = np.where(['fx^3' in l for l in mol.ao_labels()])[0]
-        fy3s = np.where(['fy^3' in l for l in mol.ao_labels()])[0]
+    dxys = np.where(['dxy' in l for l in mol.ao_labels()])[0]
+    dx2y2s = np.where(['dx2-y2' in l for l in mol.ao_labels()])[0]
+    dyzs = np.where(['dyz' in l for l in mol.ao_labels()])[0]
+    dxzs = np.where(['dxz' in l for l in mol.ao_labels()])[0]
+    
+    fx3s = np.where(['fx^3' in l for l in mol.ao_labels()])[0]
+    fy3s = np.where(['fy^3' in l for l in mol.ao_labels()])[0]
 
-        fzx2s = np.where(['fzx^2' in l for l in mol.ao_labels()])[0]
-        fxyzs =  np.where(['fxyz' in l for l in mol.ao_labels()])[0]
+    fzx2s = np.where(['fzx^2' in l for l in mol.ao_labels()])[0]
+    fxyzs =  np.where(['fxyz' in l for l in mol.ao_labels()])[0]
 
-        fxz2s = np.where(['fxz^2' in l for l in mol.ao_labels()])[0]
-        fyz2s =  np.where(['fyz^2' in l for l in mol.ao_labels()])[0]
+    fxz2s = np.where(['fxz^2' in l for l in mol.ao_labels()])[0]
+    fyz2s =  np.where(['fyz^2' in l for l in mol.ao_labels()])[0]
 
-
-        L = np.eye(len(mol.ao_labels()))
-
-        for px,py in zip(pxs,pys):
-            L[py,px] = 1
-        for dxy,dx2y2,dyz in zip(dxys,dx2y2s,dyzs):
-            L[dxy,dx2y2] = 1
-            L[dyz,dx2y2] = 1
-
-        for fx3, fy3 in zip(fx3s,fy3s):
-            L[fy3,fx3] = 1
-
-        for fzx2, fxyz in zip(fzx2s,fxyzs):
-            L[fxyz,fzx2] = 1
-
-        for fxz2, fyz2 in zip(fxz2s,fyz2s):
-            L[fyz2, fxz2] = 1
-
-    else:
-        ps = np.where(['p' in l and not 'z' in l for l in mol.ao_labels()])[0]
-        pzs = np.where(['pz' in l for l in mol.ao_labels()])[0]
-        if len(pzs):
-             ps = ps.reshape(len(pzs), -1)
-
-        ds = np.where(['d' in l and not 'z^2' in l for l in mol.ao_labels()])[0]
-        dzs = np.where(['dz^2' in l for l in mol.ao_labels()])[0]
-        if len(dzs):
-            ds = ds.reshape(len(dzs), -1)
-
-        fs = np.where(['f' in l and not 'z^3' in l for l in mol.ao_labels()])[0]
-        fzs = np.where(['fz^3' in l for l in mol.ao_labels()])[0]
-        if len(fzs):
-            fs = fs.reshape(len(fzs), -1)
-
-        L = np.eye(len(mol.ao_labels()))
-
-        for p, pz in zip(ps, pzs):
-            for p_ in p:
-                L[p_,pz] = 1
-
-        for d, dz in zip(ds, dzs):
-            for d_ in d:
-                L[d_,dz] = 1
-#                 L[dz,d_] = 1
-
-        for f, fz in zip(fs, fzs):
-            for f_ in f:
-                L[f_,fz] = 1
-
+    L = np.eye(len(mol.ao_labels()))
+    for px,py in zip(pxs,pys):
+        L[px,py] = 2/np.sqrt(2)
+        L[py,py] = 1/np.sqrt(2)
+        L[px,px] = 1/np.sqrt(2)
+        
+    for dxy,dx2y2 in zip(dxys,dx2y2s):
+        L[dxy,dx2y2] = 2/np.sqrt(2)
+        L[dx2y2,dx2y2] = 1/np.sqrt(2)
+        L[dxy,dxy] = 1/np.sqrt(2)
+        
+    for dyz,dxz in zip(dyzs,dxzs):
+        L[dyz,dxz] = 2/np.sqrt(2)
+        L[dxz,dxz] = 1/np.sqrt(2)
+        L[dyz,dyz] = 1/np.sqrt(2)
+        
+    for fx3, fy3 in zip(fx3s,fy3s):
+        L[fy3,fx3] = 2/np.sqrt(2)
+        L[fx3,fx3] = 1/np.sqrt(2)
+        L[fy3,fy3] = 1/np.sqrt(2)
+        
+    for fzx2, fxyz in zip(fzx2s,fxyzs):
+        L[fxyz,fzx2] = 2/np.sqrt(2)
+        L[fzx2,fzx2] = 1/np.sqrt(2)
+        L[fxyz,fxyz] = 1/np.sqrt(2)
+        
+    for fxz2, fyz2 in zip(fxz2s,fyz2s):
+        L[fyz2, fxz2]  = 2/np.sqrt(2)
+        L[fxz2, fxz2]  = 1/np.sqrt(2)
+        L[fyz2, fyz2]  = 1/np.sqrt(2)
+        
+    L = .5*(L + L.T)
     return L
 
 def get_symmetrized_grid(mol, mf, n_rad=20, n_ang=10, print_stat=True, method= half_circle, return_errors = False):
@@ -496,22 +449,12 @@ def get_symmetrized_grid(mol, mf, n_rad=20, n_ang=10, print_stat=True, method= h
     exc_ex = np.sum(mf._numint.eval_xc(mf.xc, (rho_ex_a,rho_ex_b),spin=1)[0]*mf.grids.weights*(rho_ex_a[0]+rho_ex_b[0]))
 
     print("Using method", method, " for grid symmetrization")
-#     if mf.xc == 'SCAN' and method == half_circle:
-    if True:
-        if mf.xc == 'SCAN':
-            meta = True
-        else:
-            meta = False
-        coords, weights = half_circle_scan(mf, mol, n_rad, n_ang)
+    if mf.xc == 'SCAN' or mf.xc == 'TPSS':
+        meta = True
     else:
         meta = False
-        coords, weights = half_circle(n_rad, n_ang)
-        atomic_grids = {mol.atom_pure_symbol(el): ( np.array(coords), np.array(weights)) for el, _ in enumerate(mol.atom_charges())}
-
-        coords, weights = \
-                mf.grids.gen_partition(mol, atomic_grids, radii_adjust=mf.grids.radii_adjust,
-                                       atomic_radii=mf.grids.atomic_radii)
-
+    coords, weights = half_circle(mf, mol, n_rad, n_ang)
+ 
     exc = mf._numint.eval_xc(mf.xc, (rho_ex_a,rho_ex_b),spin=1)[0]
     vxc = mf._numint.eval_xc(mf.xc, rho_ex_a +rho_ex_b)[1][0]
     if meta:
@@ -521,9 +464,6 @@ def get_symmetrized_grid(mol, mf, n_rad=20, n_ang=10, print_stat=True, method= h
     vmunu1 = np.einsum('i,i,ij,ik->jk', mf.grids.weights, vxc,aoi[0],aoi[0])
     if meta:
         vtmunu1  = np.einsum('i,lij,lik->jk',vtau*mf.grids.weights, aoi[1:4],aoi[1:4])
-    emunu1 = np.einsum('i,i,ij,ik->jk',mf.grids.weights, exc,aoi[0],aoi[0])
-
-
 
     mf.grids.coords = coords
     mf.grids.weights = weights
@@ -550,29 +490,23 @@ def get_symmetrized_grid(mol, mf, n_rad=20, n_ang=10, print_stat=True, method= h
     vmunu2 = np.einsum('i,i,ij,ik->jk',mf.grids.weights, vxc,aoi[0],aoi[0])
     if meta:
         vtmunu2  = np.einsum('i,lij,lik->jk',vtau*mf.grids.weights,aoi[1:4],aoi[1:4])
-    emunu2 = np.einsum('i,i,ij,ik->jk',mf.grids.weights, exc,aoi[0],aoi[0])
+
+    L = get_L(mol)
+    scaling = get_m_mask(mol)
+    
+    vmunu2 = np.einsum('ij,jk,kl->il', L, vmunu2, L.T)*scaling
 
     if meta:
-        vmunu2_sym = vmunu2
-        emunu2_sym = emunu2
-        L = np.eye(len(vmunu2))
-    else:
-#         L = get_L(mol, method)
-        L = np.eye(len(vmunu2))
-        vmunu2_sym = L.dot(vmunu2.dot(L.T))
-        emunu2_sym = L.dot(emunu2.dot(L.T))
+        vtmunu2 = np.einsum('ij,jk,kl->il', L, vtmunu2, L.T)*scaling
+        vterr = vtmunu1 - vtmunu2
+    verr = vmunu1 - vmunu2
+    if print_stat:print({True: 'Potentials identical', False: 'Potentials not identical {}'.format(np.max(np.abs(verr)))}[np.allclose(vmunu1,vmunu2,atol=1e-5)])
+    if print_stat and meta:print({True: 'tau Potentials identical', False: 'tau Potentials not identical {}'.format(np.max(np.abs(vterr)))}[np.allclose(vtmunu1,vtmunu2,atol=1e-5)])
 
-    scaling = vmunu1/(vmunu2_sym + 1e-10)
-    vmunu2 = vmunu2_sym*scaling
-
-    if meta:
-        scalingt = vtmunu1/(vtmunu2 + 1e-10)
-        vtmunu2 = vtmunu2*scalingt
-
-    if print_stat:print({True: 'Potentials identical', False: 'Potentials not identical'}[np.allclose(vmunu1,vmunu2,atol=1e-5)])
-    if print_stat and meta:print({True: 'tau Potentials identical', False: 'tau Potentials not identical'}[np.allclose(vtmunu1,vtmunu2,atol=1e-5)])
-
-    if meta:
-        return mf.grids.coords, mf.grids.weights, L, np.stack([scaling,scalingt])
+    if return_errors:
+        if meta:
+            return (mf.grids.coords, mf.grids.weights, L, scaling), ((vmunu1, vmunu2), (vtmunu1, vtmunu2)) 
+        else:
+            return (mf.grids.coords, mf.grids.weights, L, scaling), ((vmunu1, vmunu2)) 
     else:
         return mf.grids.coords, mf.grids.weights, L, scaling

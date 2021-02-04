@@ -284,18 +284,8 @@ class XC(torch.nn.Module):
 
         return descr
 
-    def get_V(self, dm, scaling):
-        v1, v2 = torch.autograd.functional.jacobian(self.forward, (dm,dm), create_graph=True)
-        if dm.dim() == 3:
-            v1 = v1 * scaling[0].unsqueeze(0)
-            v2 = v2 * scaling[1].unsqueeze(0)
-        else:
-            v1 = v1 * scaling[0]
-            v2 = v2 * scaling[1]
-        return v1 + v2
-#         return v1
 
-    def forward(self, dm, dm1=None):
+    def forward(self, dm):
         Exc = 0
         if self.grid_models or self.heg_mult:
             if self.ao_eval.dim()==2:
@@ -312,22 +302,11 @@ class XC(torch.nn.Module):
 #             rho = .5*(torch.einsum('ij,xik,jk->xi', self.ao_eval[0], self.ao_eval, dm) +
 #                   torch.einsum('xij,ik,jk->xi', self.ao_eval, self.ao_eval[0], dm))
             rho = torch.einsum('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm + noise )
-            if dm1 is None:
-                dm1 = dm
-
-            rho2 = torch.einsum('xij,yik,...jk->xy...i', ao_eval[1:], ao_eval[1:], dm1 + noise)
-#             rho2 = rho[1:,1:,...]
-#             if self.training:
-#                 noise = torch.abs(torch.randn(rho[:,:,0].size(),device=rho.device)*1e-8)
-#                 for i in range(rho.size()[-2]):
-# #                     if not torch.all(rho[0,0,i]== torch.zeros_like(rho[0,0,i])):
-#                     rho[:,:,i] += noise
-#                     rho2[:,:,i] += noise[1:,1:]
 
             rho0 = rho[0,0]
             drho = rho[0,1:4] + rho[1:4,0]
-#             tau = 0.5*(rho[1,1] + rho[2,2] + rho[3,3])
-            tau = 0.5*(rho2[1,1] + rho2[2,2] + rho2[0,0])
+            tau = 0.5*(rho[1,1] + rho[2,2] + rho[3,3])
+
             if dm.dim() == 3:
                 rho0_a = rho0[0]
                 rho0_b = rho0[1]
