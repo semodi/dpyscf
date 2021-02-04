@@ -20,6 +20,7 @@ basis = '6-311++G(3df,2pd)'
 
 # systems = [113, 25, 18, 114, 0] #Training
 systems = [103, 14, 23, 5, 10, 79, 27, 105] #Validation
+systems += [23, 84, 144, 21, 116, 106, 15, 58] #Expanded training
 # systems = [5] #Validation
 # systems = [103, 14]
 bh_systems = [1, 23, 60]
@@ -71,9 +72,11 @@ def run_validate(nxc='MGGA_tmp', xc_type='nxc'):
         traced = torch.jit.trace(nxc, torch.rand(100,9))
        
         exx_a = 0
-        if hasattr(nxc, 'exx_a'):
+        try:
             exx_a = nxc.exx_a.detach().numpy()
-        
+        except:
+            exx_a = 0 
+            
         if exx_a:
             tmpmod += '0'
         try:
@@ -94,19 +97,28 @@ def run_validate(nxc='MGGA_tmp', xc_type='nxc'):
     pred_dict = {}
     dm_loss = []
     for a, dm_ref in zip(atoms,dm_refs):
-        print(a)
-        spin = a.info.get('spin', 0)
         pos = a.positions
         this_basis = basis
         spec = a.get_chemical_symbols()
         mol_input = [[s, p] for s, p in zip(spec, pos)]
+        if len(pos) == 1:
+            spin = spins[spec[0]]
+        else:
+            if a.info['openshell']:
+                spin = 2
+            else:
+                spin = 0
         try:
             mol = gto.M(atom=mol_input, basis=this_basis,spin=spin)
         except Exception:
             spin =1
             mol = gto.M(atom=mol_input, basis=this_basis,spin=spin)
 
-        method = pylibnxc.pyscf.UKS
+        if spin == 0:
+            method = pylibnxc.pyscf.RKS
+        else:
+            method = pylibnxc.pyscf.UKS
+        
         mol.verbose=4
         if xc_type == 'nxc':
             mf = method(mol, nxc=nxc, nxc_kind='grid')
@@ -120,8 +132,9 @@ def run_validate(nxc='MGGA_tmp', xc_type='nxc'):
         pred_dict[''.join(a.get_chemical_symbols())] = mf.e_tot
         if len(pos) > 1:
             if dm_ref.ndim == 2:
-                    dm_ref = np.stack([dm_ref,dm_ref],axis=0)*.5
-
+                dm_ref = np.stack([dm_ref,dm_ref],axis=0)*.5
+            if dm_predicted.ndim == 2:
+                dm_predicted = np.stack([dm_predicted,dm_predicted],axis=0)*.5
             rho_predicted = get_rho(mf, mol, np.sum(dm_predicted, axis=0), mf.grids)
             rho_ref = get_rho(mf, mol, np.sum(dm_ref, axis=0), mf.grids)
             dev = np.sqrt(np.sum((rho_predicted - rho_ref)**2*mf.grids.weights))/(np.sum(rho_predicted*mf.grids.weights))

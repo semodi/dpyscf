@@ -51,15 +51,20 @@ mols = []
 
 for a in atoms:
     print(a)
-    spin = a.info.get('spin', 0)
+
 
     pos = a.positions
-#     if len(pos)==1:
-#         this_basis = '6-311++G'
-#     else:
     this_basis = basis
     spec = a.get_chemical_symbols()
     mol_input = [[s, p] for s, p in zip(spec, pos)]
+    if len(pos) == 1:
+        spin = spins[spec[0]]
+    else:
+        if a.info['openshell']:
+            spin = 2
+        else:
+            spin = 0
+        
     try:
         mol = gto.M(atom=mol_input, basis=this_basis,spin=spin)
     except Exception:
@@ -67,7 +72,7 @@ for a in atoms:
         mol = gto.M(atom=mol_input, basis=this_basis,spin=spin)
 
     if spin == 0:
-        method = pylibnxc.pyscf.UKS
+        method = pylibnxc.pyscf.RKS
     else:
         method = pylibnxc.pyscf.UKS
 
@@ -79,11 +84,14 @@ for a in atoms:
         mf = method(mol)
         mf.xc = sys.argv[1]
 
-    mf.grids.level=5
+    mf.grids.level=7
 #     mf.grids.level=1
     mf.kernel()
-
-    dm_predicted.append(mf.make_rdm1())
+    dm = mf.make_rdm1()
+    if dm.ndim == 2:
+        dm = np.stack([dm,dm])*0.5
+    dm_predicted.append(dm)
+    
     if len(pos) == 1:
         atoms_predicted[a.get_chemical_symbols()[0]] = mf.e_tot
     else:
@@ -96,9 +104,6 @@ for energy, a in zip(energies_predicted, atoms):
     pred_dict.update(atoms_predicted)
     ae_energies.append(atomization_energies(pred_dict)[symbols])
 
-# pred_dict = {''.join(a.get_chemical_symbols()): e for a,e in zip(atoms, energies_predicted)}
-# ae_pred = atomization_energies(pred_dict)
-# pred = np.array([ae_pred[''.join(a.get_chemical_symbols())] for a in atoms if len(a.positions) > 1])
 
 np.save('{}_g2_ae.npy'.format(sys.argv[1]),ae_energies)
 with open('{}_g2.dm'.format(sys.argv[1]),'wb') as file:

@@ -18,28 +18,26 @@ if __name__ == '__main__':
     if func not in ['PBE','SCAN']:
         raise Exception("Functional has to be either SCAN or PBE")
 
-    if func == 'SCAN':
-        atoms = read('../data/haunschild_scan.traj',':')
-    elif func == 'PBE':
-        atoms = read('../data/haunschild_training.traj',':')
+
+    atoms = read(sys.argv[3],':')
     indices = np.arange(len(atoms))
 
     #TESTING
-    # indices = [0, 16]
-    # atoms = [atoms[i] for i in indices]
+#     # indices = [0, 16]
+#     # atoms = [atoms[i] for i in indices]
     
-    # indices = [0, 11, 16, 17]
-    if func =='PBE':
-        pol ={'FF':True,'LiF':True,'LiH':True}
-    else:
-        pol ={}
-
+#     # indices = [0, 11, 16, 17]
+#     if func =='PBE':
+#         pol ={'FF':True,'LiF':True,'LiH':True}
+#     else:
+#         pol ={}
+    pol = {}
     basis = '6-311++G(3df,2pd)'
 
     distances = np.arange(len(atoms))
 
 
-    baseline = [get_datapoint(d, basis=d.info.get('basis',basis), grid_level=d.info.get('grid_level', 9),
+    baseline = [get_datapoint(d, basis=basis, grid_level=d.info.get('grid_level', 9),
                               xc=func, zsym=d.info.get('sym',True),
                               n_rad=d.info.get('n_rad',30), n_ang=d.info.get('n_ang',15),
                               init_guess=False, spin = d.info.get('spin',0),

@@ -48,23 +48,34 @@ parser.add_argument('--l2', metavar='l2', type=float, default=1e-8, help='Weight
 parser.add_argument('--hnorm', action='store_true', help='Use H energy and density in loss')
 parser.add_argument('--print_stdout', action='store_true', help='Print to stdout instead of logfile')
 parser.add_argument('--print_names', action='store_true', help='Print molecule names during training')
-
-
+parser.add_argument('--nonsc_weight', metavar='nonsc_weight',type=float, default=.5, help='Loss multiplier for non-selfconsistent datapoints')
+parser.add_argument('--start_converged', action='store_true', help='Start from converged density matrix')
+parser.add_argument('--scf_steps', metavar='scf_steps', type=int, default=25, help='Number of scf steps')
+parser.add_argument('--polynomial', action='store_true', help='Use polynomials instead of neural networks')
+parser.add_argument('--free', action='store_true', help='No LOB and UEG limit')
 args = parser.parse_args()
 
+ueg_limit = not args.free
 RHO_mult = args.rho_weight
 E_mult = args.E_weight
+nonSC_mult = args.nonsc_weight
 HYBRID = (args.hyb_par > 0.0)
 
 def get_scf(path=args.modelpath):
 
     if args.type == 'GGA':
-        x = XC_L(device=DEVICE,n_input=1, n_hidden=16, spin_scaling=True, use=[1], lob=True) # PBE_X
-        c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2])
+        lob = 1.804 if ueg_limit else 0 
+        if args.polynomial:
+            x = XC_L_POL(device=DEVICE, max_order=3, use=[1], lob=lob, ueg_limit=ueg_limit)
+            c = C_L_POL(device=DEVICE, max_order=8,  use=[0, 1, 2, 3], ueg_limit=ueg_limit)
+        else:
+            x = XC_L(device=DEVICE,n_input=1, n_hidden=16, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
+            c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit)
+        
         xc_level = 2
     elif args.type == 'MGGA':
-        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, spin_scaling=True, use=[1,2], lob=True) # PBE_X
-        c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3])
+        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=1.174, ueg_limit=ueg_limit) # PBE_X
+        c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit)
         xc_level = 3
     print("Loading pre-trained models from " + args.pretrain_loc)
     x.load_state_dict(torch.load(args.pretrain_loc + '/x'))
@@ -72,34 +83,31 @@ def get_scf(path=args.modelpath):
 
     if HYBRID:
         try:
-            a = 1- args.hyb_par
+            a = 1 - args.hyb_par
             b = 1
             d = args.hyb_par
-            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, model_mult=[] )
-            scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
+            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, polynomial = args.polynomial )
+            scf = SCF(nsteps=args.scf_steps, xc=xc, exx=True,alpha=0.3)
 
             if path:
                 xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
 
-            xc.add_model_mult([a,b])
             xc.add_exx_a(d)
-            xc.model_mult.requires_grad=True
             xc.exx_a.requires_grad=True
         except RuntimeError:
             a = 1 - args.hyb_par
             b = 1
             d = args.hyb_par
-            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, model_mult=[a, b],exx_a=d)
-            scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
+            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level,exx_a=d, polynomial = args.polynomial)
+            scf = SCF(nsteps=args.scf_steps, xc=xc, exx=True,alpha=0.3)
 
             if path:
                 xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
-            xc.model_mult.requires_grad=True
             xc.exx_a.requires_grad=True
 
     else:
-        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level)
-        scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
+        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, polynomial = args.polynomial)
+        scf = SCF(nsteps=args.scf_steps, xc=xc, exx=False,alpha=0.3)
         if path:
             xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
 
@@ -132,17 +140,21 @@ if __name__ == '__main__':
         source_dir = __file__
         tar.add(source_dir, arcname=os.path.basename(source_dir))
 
-    atoms = read(dpyscf_dir + '/data/haunschild_training.traj',':')
+#     atoms = read(dpyscf_dir + '/data/haunschild_training.traj',':')
+    atoms = read(dpyscf_dir + '/data/haunschild_scan_extended.traj',':')
+#     atoms = read(dpyscf_dir + '/data/haunschild_pbe.traj',':')
     # atoms = read(dpyscf_dir + '/data/haunschild_test.traj',':')
     indices = np.arange(len(atoms)).tolist()
 
     if args.type == 'GGA':
+#         pop = [12, 8, 7,  5, 4]
         pop = [12, 8, 7,  5, 4]
         if HYBRID:
-             pop = [12, 8, 7,  5, 4, 2] # (Hybrid GGA)
+#              pop = [29, 28, 27, 26, 25, 24, 23, 22, 21, 12, 7,  5, 2] # (Hybrid GGA)
+            pop = [21, 12, 7,  5, 2] # (Hybrid GGA)
     else:
-        pop = [21, 12, 11, 10, 8, 7, 5, 4, 0] # (Meta-GGA)
-
+        pop = [21, 12, 11, 10, 8, 7, 5, 4, 3, 0] # (Meta-GGA)
+#         pop = [ 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 1, 0] # (Meta-GGA)
     # pop = []
     [atoms.pop(i) for i in pop]
     [indices.pop(i) for i in pop]
@@ -187,16 +199,20 @@ if __name__ == '__main__':
         cnt = 0
         for dm_init, matrices, e_ref, dm_ref in dataloader_train:
             print(atoms[cnt])
+            sc = atoms[cnt].info.get('sc',True)
             cnt += 1
+            if not sc: continue 
             dm_init = dm_init.to(DEVICE)
             e_ref = e_ref.to(DEVICE)
             dm_ref = dm_ref.to(DEVICE)
             matrices = {key:matrices[key].to(DEVICE) for key in matrices}
             E_pretrained.append(matrices['e_pretrained'])
-            results = scf.forward(matrices['dm_realinit'], matrices)
+            results = scf.forward(matrices['dm_realinit'], matrices, sc)
             E = results['E']
-            Es.append(E.detach().cpu().numpy())
-
+            if sc:
+                Es.append(E.detach().cpu().numpy())
+            else:
+                Es.append(np.array([E.detach().cpu().numpy()]*scf.nsteps))
         e_premodel = np.array(Es)[:,-1]
         print("\n ------- Statistics ----- ")
         print(str(e_premodel), 'Energies from pretrained model' )
@@ -208,12 +224,14 @@ if __name__ == '__main__':
 
     scf.xc.train()
     PRINT_EVERY=1
-    skip_steps = 20
+    skip_steps = max(5, args.scf_steps - 10)
 
     def get_optimizer(model, path=''):
         if HYBRID:
-            optimizer = torch.optim.Adam(list(model.parameters()) + [model.xc.model_mult, model.xc.exx_a],
+            optimizer = torch.optim.Adam(list(model.parameters()) + [model.xc.exx_a],
                                       lr=args.lr, weight_decay=args.l2)
+#             optimizer = torch.optim.Adam(list(model.parameters()),
+#                                       lr=args.lr, weight_decay=args.l2)
         else:
             optimizer = torch.optim.Adam(model.parameters(),
                                       lr=args.lr, weight_decay=args.l2)
@@ -232,9 +250,11 @@ if __name__ == '__main__':
     AE_mult = 1
 
     mol_losses = {"rho" : (partial(rho_loss,loss = torch.nn.MSELoss()), RHO_mult)}
-    atm_losses = {}
+    atm_losses = {"E":  (partial(energy_loss, loss = torch.nn.MSELoss()), E_mult)}
+#     atm_losses = {}
     h_losses = {"rho" : (partial(rho_loss,loss = torch.nn.MSELoss()), RHO_mult),
                 "E":  (partial(energy_loss, loss = torch.nn.MSELoss()), E_mult)}
+#     h_losses = {}
 
     ae_loss = partial(ae_loss,loss = torch.nn.MSELoss())
 
@@ -248,13 +268,18 @@ if __name__ == '__main__':
             error_cnt = 0
             running_losses = {key:0 for key in mol_losses}
             running_losses['ae'] = 0
-            if args.hnorm:
-                running_losses['E'] = 0
+#             if args.hnorm:
+            running_losses['E'] = 0
             total_loss = 0
             atm_cnt = {}
             encountered_nan = False
             try:
-                for molecule in list(molecules.keys()):
+                train_order = np.arange(len(molecules)).astype(int)
+                np.random.shuffle(train_order)
+                for m_idx in train_order:
+                    molecule = list(molecules.keys())[m_idx]
+                    mol_sc = True
+#                 for molecule in molecules:
                     ref_dict = {}
                     pred_dict = {}
                     loss = 0
@@ -267,9 +292,19 @@ if __name__ == '__main__':
                         dm_ref = dm_ref.to(DEVICE)
                         matrices = {key:matrices[key].to(DEVICE) for key in matrices}
                         dm_mix = matrices['dm_realinit']
-                        mixing = torch.rand(1)*0+1
-    #                     mixing = torch.rand(1)/2+0.75
-                        results = scf(dm_init*(1-mixing) + dm_mix*mixing, matrices)
+#                         mixing = torch.rand(1)*0+1
+                        if args.start_converged:
+                            mixing = torch.rand(1)*0
+                        else:
+                            mixing = torch.rand(1)/2 + 0.5
+                        sc = atoms[idx].info.get('sc',True)
+                        if sc:
+                            dm_in = dm_init*(1-mixing) + dm_mix*mixing
+                        else:
+                            dm_in = dm_init
+                            mol_sc = False
+                        
+                        results = scf(dm_in, matrices, sc)
                         results['dm_ref'] = dm_ref
                         results['fcenter'] = matrices.get('fcenter',None)
                         results['rho'] = matrices['rho']
@@ -280,26 +315,39 @@ if __name__ == '__main__':
                         results['n_elec'] = matrices['n_elec']
                         results['e_ip_ref'] = matrices['e_ip']
                         results['mo_occ'] = matrices['mo_occ']
-                        if len(atoms[idx].positions) > 1:
+                        if len(atoms[idx].positions) > 1 and sc:
                             losses = mol_losses
-                        elif str(atoms[idx].symbols) in ['H'] and args.hnorm:
+                        elif str(atoms[idx].symbols) in ['H', 'Li'] and args.hnorm:
                             losses = h_losses
                             results['E_ref'] = -0.5
-                        else:
+                        elif sc:
                             losses = atm_losses
                         losses_eval = {key: losses[key][0](results)/a_count[idx] for key in losses}
                         running_losses.update({key:running_losses[key] +                               losses_eval[key].item() for key in losses})
-                        ref_dict[''.join(atoms[idx].get_chemical_symbols())] = e_ref
+                        
                         if len(atoms[idx].positions) > 1:
-                            pred_dict[''.join(atoms[idx].get_chemical_symbols())] = results['E'][skip_steps:]
+                            ref_dict[''.join(atoms[idx].get_chemical_symbols())] = e_ref
+                            if sc:
+                                steps = skip_steps
+                            else:
+                                steps = -1    
+                            pred_dict[''.join(atoms[idx].get_chemical_symbols())] = results['E'][steps:]
                         else:
+                            ref_dict[''.join(atoms[idx].get_chemical_symbols())] = torch.zeros_like(e_ref)
                             pred_dict[''.join(atoms[idx].get_chemical_symbols())] = results['E'][-1:]
                         loss += sum([losses_eval[key]*losses[key][1] for key in losses])
 
                     ael = ae_loss(ref_dict,pred_dict)
                     running_losses['ae'] += ael.item()
-#                     print(molecule, ael.item())
-                    loss += AE_mult * ael
+#                     print('predict dict', pred_dict)
+#                     print('ref dict', ref_dict)
+#                     print('AE loss', ael.item())
+                    if mol_sc:
+                        running_losses['ae'] += ael.item()
+                        loss += ael
+                    else:
+                        loss += nonSC_mult * ael
+                        running_losses['ae'] += nonSC_mult * ael.item()
                     total_loss += loss.item()
                     loss.backward()
                     optimizer.step()
@@ -336,5 +384,5 @@ if __name__ == '__main__':
             print('Epoch {} ||'.format(epoch), [' {} : {:.6f}'.format(key,val) for key, val in running_losses.items()],
                   '|| total loss {:.6f}'.format(total_loss),chkpt_str)
             if HYBRID:
-                print(scf.xc.model_mult , scf.xc.exx_a)
+                print(scf.xc.exx_a)
             scheduler.step(total_loss)

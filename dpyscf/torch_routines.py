@@ -120,7 +120,7 @@ class SCF(torch.nn.Module):
         self.xc = xc
         self.ncore = int(ncore/2)
 
-    def forward(self, dm, matrices):
+    def forward(self, dm, matrices, sc=True):
         dm = dm[0]
 
         # Required matrices
@@ -142,7 +142,6 @@ class SCF(torch.nn.Module):
         E = []
         deltadm = []
         for step in range(self.nsteps):
-
             if len(deltadm) > 90 and step < self.nsteps - 5:
                 dm = dm_old + diis(deltadm)
 #             alpha = self.alpha
@@ -152,9 +151,9 @@ class SCF(torch.nn.Module):
                 beta = (1-alpha)
                 dm = alpha * dm + beta * dm_old
 
-            if not step==0:
-                deltadm.append(dm-dm_old)
-            deltadm = deltadm[-9:]
+#             if not step==0:
+#                 deltadm.append(dm-dm_old)
+#             deltadm = deltadm[-9:]
 
             dm_old = dm
 
@@ -191,20 +190,28 @@ class SCF(torch.nn.Module):
 
             veff += vxc
             f = get_fock(hc, veff)
-            try:
-                mo_e, mo_coeff = self.eig(f, s_oh, s_inv_oh)
+            if sc:
+                try:
+                    mo_e, mo_coeff = self.eig(f, s_oh, s_inv_oh)
 
-            except RuntimeError:
-                raise RuntimeError
-            dm = self.make_rdm1(mo_coeff, mo_occ)
+                except RuntimeError:
+                    raise RuntimeError
+
+                dm = self.make_rdm1(mo_coeff, mo_occ)
+#             if self.xc:
+#                 exc = self.xc(dm)
             E.append(self.energy_tot(dm_old, hc, veff-vxc)+e_nuc + exc)
+            if not sc:
+                break
 #             E.append(self.energy_tot(dm, hc, veff-vxc)+e_nuc + exc)
         mo_occ[:self.ncore] = 0
 #         dm = self.make_rdm1(mo_coeff, mo_occ)
-        if dm.dim() == 3:
-            e_ip = mo_e[0][ip_idx]
-        else:
-            e_ip = mo_e[ip_idx]
+#         if dm.dim() == 3:
+#             e_ip = mo_e[0][ip_idx]
+#         else:
+#             e_ip = mo_e[ip_idx]
+        e_ip = 0
+        mo_e = 0
         results = {'E':torch.cat(E), 'dm':dm, 'mo_energy':mo_e,'e_ip':e_ip}
 
         return results

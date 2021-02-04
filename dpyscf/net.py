@@ -10,19 +10,20 @@ from ase import Atoms
 from ase.io import read
 from .torch_routines import *
 
-def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=False):
+def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=False, ueg_limit=True):
 
     if xctype == 'GGA':
+        lob = 1.804 if ueg_limit else 0 
         if polynomial:
-            x = XC_L_POL(device=DEVICE, max_order=3, spin_scaling=True, use=[1], lob=1.804)
-            c = C_L_POL(device=DEVICE, max_order=8,  use=[0, 1, 2, 3])
+            x = XC_L_POL(device=DEVICE, max_order=3, use=[1], lob=lob, ueg_limit=ueg_limit)
+            c = C_L_POL(device=DEVICE, max_order=8,  use=[0, 1, 2, 3], ueg_limit=ueg_limit)
         else:
-            x = XC_L(device=DEVICE,n_input=1, n_hidden=16, spin_scaling=True, use=[1], lob=1.804) # PBE_X
-            c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=True)
+            x = XC_L(device=DEVICE,n_input=1, n_hidden=16, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
+            c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit)
         xc_level = 2
     elif xctype == 'MGGA':
-        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, spin_scaling=True, use=[1,2], lob=1.174) # PBE_X
-        c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3])
+        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=1.174, ueg_limit=ueg_limit) # PBE_X
+        c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit)
         xc_level = 3
     print("Loading pre-trained models from " + pretrain_loc)
     x.load_state_dict(torch.load(pretrain_loc + '/x'))

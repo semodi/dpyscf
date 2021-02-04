@@ -200,10 +200,6 @@ def half_circle_scan(mf, mol, level, n_ang = 25):
     print('Number of grid points (level = {}, n_ang = {}):'.format(level,n_ang), len(pruned.weights))
     coords = pruned.coords
     weights = pruned.weights
-#     coords2 = np.array(coords)
-#     coords2[:,0] *= -1
-#     coords = np.concatenate([coords,coords2])
-#     weights = np.concatenate([weights, weights])/2
 
     coords2 = np.array(coords)
     coords2 = coords2[:,[1,0,2]]
@@ -211,8 +207,15 @@ def half_circle_scan(mf, mol, level, n_ang = 25):
     s = 1/np.sqrt(2)
     coords3 = np.array(coords)
     coords3 = coords3.dot(np.array([[s,s,0],[-s,s,0],[0,0,1]]))
-    coords = np.concatenate([coords,coords2, coords3])
-    weights = np.concatenate([weights, weights, weights])/3
+    
+    c = np.sqrt(3)/2
+    s = 1/2
+    coords4 = np.array(coords)
+    coords4 = coords4.dot(np.array([[c,s,0],[-s,c,0],[0,0,1]]))
+    
+    coords = np.concatenate([coords,coords2, coords3, coords4])
+    weights = np.concatenate([weights, weights, weights, weights])/4
+    
     return coords, weights
 
 def half_circle(n_rad = 100, n_ang = 70):
@@ -251,9 +254,15 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
 
     print(atoms)
     print(basis)
+    if not atoms.info.get('sc', True):
+        xc = 'PBE0'
+        
     if not ref_basis:
         ref_basis = basis
 
+    if atoms.info.get('openshell',False) and spin ==0:
+        spin = 2
+        
     if xc:
         if spin == 0 and not pol:
             method = dft.RKS
@@ -264,13 +273,17 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         method = scf.UHF
 
     features = {}
-
+    
     pos = atoms.positions
     spec = atoms.get_chemical_symbols()
     mol_input = [[s, p] for s, p in zip(spec, pos)]
-    mol = gto.M(atom=mol_input, basis=basis,spin=spin)
-    mol_ref = gto.M(atom=mol_input, basis=ref_basis, spin=spin)
+    try:
+        mol = gto.M(atom=mol_input, basis=basis,spin=spin)
+    except:
+        spin = 1
+        mol = gto.M(atom=mol_input, basis=basis,spin=spin)
 
+    mol_ref = gto.M(atom=mol_input, basis=ref_basis, spin=spin)   
     if ml_basis:
         auxmol = gto.M(atom=mol_input,spin=spin, basis=gto.parse(open(ml_basis,'r').read()))
         ml_ovlp = get_mlovlp(mol,auxmol)
@@ -333,7 +346,10 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         matrices['dm_realinit'] = dm_realinit
 
     if ref_path:
-        dm_base = np.load(ref_path+ '/{}.dm.npy'.format(ref_index))
+        if atoms.info.get('sc', True):
+            print('Loading reference density')
+            dm_base = np.load(ref_path+ '/{}.dm.npy'.format(ref_index))
+            
         if method == dft.UKS and dm_base.ndim == 2:
             dm_base = np.stack([dm_base,dm_base])*0.5
         if method == dft.RKS and dm_base.ndim == 3:
@@ -480,8 +496,12 @@ def get_symmetrized_grid(mol, mf, n_rad=20, n_ang=10, print_stat=True, method= h
     exc_ex = np.sum(mf._numint.eval_xc(mf.xc, (rho_ex_a,rho_ex_b),spin=1)[0]*mf.grids.weights*(rho_ex_a[0]+rho_ex_b[0]))
 
     print("Using method", method, " for grid symmetrization")
-    if mf.xc == 'SCAN' and method == half_circle:
-        meta = True
+#     if mf.xc == 'SCAN' and method == half_circle:
+    if True:
+        if mf.xc == 'SCAN':
+            meta = True
+        else:
+            meta = False
         coords, weights = half_circle_scan(mf, mol, n_rad, n_ang)
     else:
         meta = False
@@ -537,11 +557,12 @@ def get_symmetrized_grid(mol, mf, n_rad=20, n_ang=10, print_stat=True, method= h
         emunu2_sym = emunu2
         L = np.eye(len(vmunu2))
     else:
-        L = get_L(mol, method)
+#         L = get_L(mol, method)
+        L = np.eye(len(vmunu2))
         vmunu2_sym = L.dot(vmunu2.dot(L.T))
         emunu2_sym = L.dot(emunu2.dot(L.T))
 
-    scaling = emunu1/(emunu2_sym + 1e-10)
+    scaling = vmunu1/(vmunu2_sym + 1e-10)
     vmunu2 = vmunu2_sym*scaling
 
     if meta:
