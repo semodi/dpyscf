@@ -114,8 +114,9 @@ class XC(torch.nn.Module):
         self.training = True
         self.level = level
         self.epsilon = 1e-7
+#         self.epsilon = 10
         self.loge = 1e-5
-#         self.loge = 1e-3
+#         self.loge = 10
         self.s_gam = 1
 
         if heg_mult:
@@ -293,16 +294,22 @@ class XC(torch.nn.Module):
             else:
                 ao_eval = self.ao_eval
 
-            if self.training:
-                noise = torch.abs(torch.randn(dm.size(),device=dm.device)*1e-8)
-                noise = noise + torch.transpose(noise,-1,-2)
-            else:
-                noise = torch.zeros_like(dm)
-#                 dm += noise
-#             rho = .5*(torch.einsum('ij,xik,jk->xi', self.ao_eval[0], self.ao_eval, dm) +
-#                   torch.einsum('xij,ik,jk->xi', self.ao_eval, self.ao_eval[0], dm))
-            rho = torch.einsum('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm + noise )
+#             if self.training:
+#                 noise = torch.abs(torch.randn(dm.size(),device=dm.device)*1e-8)
+#                 noise = noise + torch.transpose(noise,-1,-2)
+#             else:
+#                 noise = torch.zeros_like(dm)
 
+#             rho = torch.einsum('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm + noise)
+            rho = torch.einsum('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm)
+#             rho = torch.einsum('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm)
+#             if self.training:
+#                 noise = torch.abs(torch.randn(rho[0,0].size(),device=rho[0,0].device)*1e-4)
+#             else:
+#                 noise = torch.zeros_like(rho[0,0])
+
+            
+            
             rho0 = rho[0,0]
             drho = rho[0,1:4] + rho[1:4,0]
             tau = 0.5*(rho[1,1] + rho[2,2] + rho[3,3])
@@ -354,6 +361,8 @@ class XC(torch.nn.Module):
         rs = (4*np.pi/3*(rho0_a+rho0_b + 1e-8))**(-1/3)
         rs_a = (4*np.pi/3*(rho0_a + 1e-8))**(-1/3)
         rs_b = (4*np.pi/3*(rho0_b + 1e-8))**(-1/3)
+        
+        
         exc_a = torch.zeros_like(rho0_a)
         exc_b = torch.zeros_like(rho0_a)
         exc_ab = torch.zeros_like(rho0_a)
