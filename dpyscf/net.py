@@ -10,7 +10,7 @@ from ase import Atoms
 from ase.io import read
 from .torch_routines import *
 
-def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=False, ueg_limit=True):
+def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=False, ueg_limit=True, meta_x=None):
 
     if xctype == 'GGA':
         lob = 1.804 if ueg_limit else 0 
@@ -55,7 +55,7 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=F
             xc.exx_a.requires_grad=True
             print(xc.exx_a)
     else:
-        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level)
+        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, meta_x=meta_x)
         scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
         if path:
             xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
@@ -102,7 +102,7 @@ def get_M(basis):
 class XC(torch.nn.Module):
 
     def __init__(self, grid_models=None, nxc_models=None, heg_mult=True, pw_mult=True,
-                    level = 1, exx_a=None, polynomial=False):
+                    level = 1, exx_a=None, polynomial=False, meta_x=None):
         super().__init__()
         self.polynomial = polynomial
         self.grid_models = None
@@ -112,6 +112,8 @@ class XC(torch.nn.Module):
         self.edge_index = None
         self.grid_coords = None
         self.training = True
+        self.meta_local = (meta_x is not None)
+        
         self.level = level
         self.epsilon = 1e-7
 #         self.epsilon = 10
@@ -139,6 +141,11 @@ class XC(torch.nn.Module):
         else:
 #             self.register_buffer('exx_a', torch.Tensor([0]))
             self.exx_a = 0
+        if self.meta_local:
+            self.meta_x = torch.nn.Parameter(torch.Tensor([meta_x]))
+        else:
+            self.meta_x = 0
+            
     def evaluate(self):
         self.training=False
     def train(self):
@@ -356,18 +363,25 @@ class XC(torch.nn.Module):
         tau_a = rho[:, 7]
         tau_b = rho[:, 8]
 
-
-        zeta = (rho0_a - rho0_b)/(rho0_a + rho0_b + 1e-8)
-        rs = (4*np.pi/3*(rho0_a+rho0_b + 1e-8))**(-1/3)
-        rs_a = (4*np.pi/3*(rho0_a + 1e-8))**(-1/3)
-        rs_b = (4*np.pi/3*(rho0_b + 1e-8))**(-1/3)
+        C_F= 3/10*(3*np.pi**2)**(2/3)
+        if self.meta_local:
+            rho0_a_ueg = ((tau_a/C_F)**(3/5))**(self.meta_x)*rho0_a**(1-self.meta_x)
+            rho0_b_ueg = ((tau_b/C_F)**(3/5))**(self.meta_x)*rho0_b**(1-self.meta_x)
+        else:
+            rho0_a_ueg = rho0_a
+            rho0_b_ueg = rho0_b
+            
+        zeta = (rho0_a_ueg - rho0_b_ueg)/(rho0_a_ueg + rho0_b_ueg + 1e-8)
+        rs = (4*np.pi/3*(rho0_a_ueg+rho0_b_ueg + 1e-8))**(-1/3)
+        rs_a = (4*np.pi/3*(rho0_a_ueg + 1e-8))**(-1/3)
+        rs_b = (4*np.pi/3*(rho0_b_ueg + 1e-8))**(-1/3)
         
         
         exc_a = torch.zeros_like(rho0_a)
         exc_b = torch.zeros_like(rho0_a)
         exc_ab = torch.zeros_like(rho0_a)
 
-        spinscale = 0.5*((1+zeta)**(4/3) + (1-zeta)**(4/3)) # zeta
+#         spinscale = 0.5*((1+zeta)**(4/3) + (1-zeta)**(4/3)) # zeta
         if self.polynomial:
             descr_method = self.get_descriptors_pol
         else:
@@ -417,7 +431,7 @@ class XC(torch.nn.Module):
 
 
                     if self.heg_mult:
-                        exc_a += (1 + exc[0])*self.heg_model(2*rho0_a)*(1-self.exx_a)
+                        exc_a += (1 + exc[0])*self.heg_model(2*rho0_a_ueg)*(1-self.exx_a)
                     else:
                         exc_a += exc[0]*(1-self.exx_a)
 
@@ -426,19 +440,21 @@ class XC(torch.nn.Module):
 #                         print("hydrogen")
                     else:
                         if self.heg_mult:
-                            exc_b += (1 + exc[1])*self.heg_model(2*rho0_b)*(1-self.exx_a)
+                            exc_b += (1 + exc[1])*self.heg_model(2*rho0_b_ueg)*(1-self.exx_a)
                         else:
                             exc_b += exc[1]*(1-self.exx_a)
 
         else:
             if self.heg_mult:
-                exc_a = self.heg_model(2*rho0_a)
-                exc_b = self.heg_model(2*rho0_b)
+                exc_a = self.heg_model(2*rho0_a_ueg)
+                exc_b = self.heg_model(2*rho0_b_ueg)
             if self.pw_mult:
                 exc_ab = self.pw_model(rs, zeta)
-
-        exc = rho0_a/rho_tot*exc_a + rho0_b/rho_tot*exc_b + exc_ab
-
+                
+        if self.meta_local:
+            exc = rho0_a_ueg/rho_tot*exc_a + rho0_b_ueg/rho_tot*exc_b + (rho0_a_ueg + rho0_b_ueg)/rho_tot*exc_ab
+        else:
+            exc = rho0_a_ueg/rho_tot*exc_a + rho0_b_ueg/rho_tot*exc_b + exc_ab
         return exc.unsqueeze(-1)
 
 class NXC(torch.nn.Module):
