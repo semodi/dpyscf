@@ -13,7 +13,7 @@ from .torch_routines import *
 def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=False, ueg_limit=True):
 
     if xctype == 'GGA':
-        lob = 1.804 if ueg_limit else 0 
+        lob = 1.804 if ueg_limit else 0
         if polynomial:
             x = XC_L_POL(device=DEVICE, max_order=3, use=[1], lob=lob, ueg_limit=ueg_limit)
             c = C_L_POL(device=DEVICE, max_order=8,  use=[0, 1, 2, 3], ueg_limit=ueg_limit)
@@ -59,7 +59,7 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=F
         scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
         if path:
             xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
-    
+
 
     xc.polynomial=polynomial
     scf.xc.train()
@@ -196,7 +196,6 @@ class XC(torch.nn.Module):
                 descr3 = torch.cat([descr3a.unsqueeze(-1), descr3b.unsqueeze(-1)],dim=-1)
             descr = torch.cat([descr, descr3],dim=-1)
         if self.level == 3:
-            assert False
             if spin_scaling:
                 # descr4a = (2*tau_a - 4*gamma_a/(16*(rho0_a+self.epsilon)))/(uniform_factor*(2*rho0_a)**(5/3)+self.epsilon)
                 descr4a = l_3(2*rho0_a, 4*gamma_a, 2*tau_a)
@@ -206,11 +205,12 @@ class XC(torch.nn.Module):
                 descr4 = descr4**3/(descr4**2+self.epsilon)
             else:
                 # descr4 = (tau_a + tau_b - (gamma_a + gamma_b+2*gamma_ab)/(8*(rho0_a + rho0_b + self.epsilon)))/(self.epsilon+(rho0_a + rho0_b)**(5/3)*((1+zeta)**(5/3) + (1-zeta)**(5/3))) # tau
-                descr4 = l_3(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab, tau_a + tau_b)
-                descr4 = descr4/((1+zeta)**(5/3) + (1-zeta)**(5/3))
+                descr4a = l_3(rho0_a, gamma_a, tau_a)
+                # descr4b = (2*tau_b - 4*gamma_b/(16*(rho0_b+self.epsilon)))/(uniform_factor*(2*rho0_b)**(5/3)+self.epsilon)
+                descr4b = l_3(rho0_b, gamma_b, tau_b)
+                descr4 = torch.cat([descr4a.unsqueeze(-1), descr4b.unsqueeze(-1)],dim=-1)
                 descr4 = descr4**3/(descr4**2+self.epsilon)
-                descr4 = descr4.unsqueeze(-1)
-            descr4 = torch.log((descr4 + 1)/2)
+#             descr4 = torch.log((descr4 + 1)/2)
             descr = torch.cat([descr, descr4],dim=-1)
         if spin_scaling:
             descr = descr.view(descr.size()[0],-1,2).permute(2,0,1)
@@ -493,41 +493,59 @@ class C_L(torch.nn.Module):
 
 class XC_L_POL(torch.nn.Module):
 
-    def __init__(self, max_order=4, device='cpu', ueg_limit=True, lob=1.804, use=[]):
+    def __init__(self, max_order=4, device='cpu', ueg_limit=True, lob=1.804, use=[], sdecay=False):
         super().__init__()
+        self.sdecay = sdecay
         self.spin_scaling = True
         self.lob = lob
         self.n_input = len(use)
+        self.ueg_lim = ueg_limit
         if ueg_limit:
             self.n_freepar = (max_order+1)**self.n_input - 1
-            self.pars = torch.nn.Parameter(torch.Tensor([0.804] + [0.0]*(self.n_freepar-1)))
+            self.pars = torch.nn.Parameter(torch.Tensor([0.1] + [0.1]*(self.n_freepar-1)))
         else:
             self.n_freepar = (max_order+1)**self.n_input
-            self.pars = torch.nn.Parameter(torch.Tensor([0.0, 0.804] + [0.0]*(self.n_freepar - 2)))
+            self.pars = torch.nn.Parameter(torch.Tensor([0.1, 0.1] + [0.0]*(self.n_freepar - 2)))
         self.pars.requires_grad = True
         self.max_order = max_order
         self.use = use
-        self.gamma_s = torch.nn.Parameter(torch.Tensor([0.2730])) #PBE parameters
+        self.gamma_s = torch.nn.Parameter(torch.Tensor([0.2730]))
         self.gamma_s.requires_grad=True
+        self.gamma_a = torch.nn.Parameter(torch.Tensor([0.50]))
+        self.gamma_a.requires_grad=True
+        self.gamma_dec = torch.nn.Parameter(torch.Tensor([4.9]))
+        self.gamma_dec.requires_grad=True
         self.min_power = 1 if ueg_limit else 0
 
     def gen_features(self, inp):
         if self.n_input == 1:
             inp = (self.gamma_s*inp**2)/(1+self.gamma_s*inp**2)
             return torch.cat([inp**i for i in range(self.min_power, self.max_order+1)],dim=-1)
-        elif self.input == 2:
-            assert False
+        elif self.n_input == 2:
+            inp_1 = (self.gamma_s*inp[...,0]**2)/(1+self.gamma_s*inp[...,0]**2)
+            inp_2 = (self.gamma_a*inp[...,1]**2)/(1+self.gamma_a*inp[...,1]**2)
+            inp_2 = (inp_2 - 0.5)*2
+            inp =  torch.stack([inp_1**i*inp_2**j for i in range(0, self.max_order+1)\
+             for j in range(0, self.max_order+1)],dim=-1)
+            if self.ueg_lim:
+                return inp[...,1:]
+            else:
+                return inp
         else:
             assert False
 
     def forward(self, rho, **kwargs):
+        if self.sdecay:
+            decay = (1 - torch.exp(-self.gamma_dec/(rho[...,self.use[0]]+1e-8)**(1/2)))
+        else:
+            decay = 1
         inp = self.gen_features(rho[...,self.use])
         # pars = torch.abs(self.pars)
         if self.lob:
             pars = self.pars/torch.sum(self.pars)*(self.lob-1)
         else:
             pars = self.pars
-        results = torch.einsum('i,...i', pars, inp)
+        results = (torch.einsum('i,...i', pars, inp)+1)*decay - 1
         return results.squeeze( )
 
 class C_L_POL(torch.nn.Module):
@@ -537,31 +555,51 @@ class C_L_POL(torch.nn.Module):
         self.spin_scaling = False
         self.n_input = int(len(use)/2)
         if ueg_limit:
-            self.n_freepar = (max_order)*(max_order+1)**(self.n_input - 1)
+            self.n_freepar = (max_order+1)*(max_order)**(self.n_input - 1)
         else:
-            self.n_freepar = (max_order+1)*(max_order+1)**(self.n_input - 1)
+            self.n_freepar = (max_order+1)**(self.n_input)
         # self.pars_ss = torch.nn.Linear(self.n_freepar, 1, bias=False)
         self.pars_ss = torch.nn.Parameter(torch.Tensor([0.1]*(self.n_freepar)))
         # self.pars_os = torch.nn.Linear(self.n_freepar, 1, bias=False)
         self.pars_os = torch.nn.Parameter(torch.Tensor([0.1]*(self.n_freepar)))
         self.max_order = max_order
         self.use = use
-        self.gamma_s = torch.nn.Parameter(torch.Tensor([0.2730])) #PBE parameters
-        self.gamma_rho = torch.nn.Parameter(torch.Tensor([0.02])) #PBE parameters
+        self.gamma_s = torch.nn.Parameter(torch.Tensor([0.2730]))
+        self.gamma_rho = torch.nn.Parameter(torch.Tensor([0.2]))
+        self.gamma_a = torch.nn.Parameter(torch.Tensor([0.2]))
+        self.gamma_a.requires_grad=True
         # self.pars.weight.data.fill_(([0.804]+[0]*(self.n_freepar-1))) # PBE parameters
         self.gamma_s.requires_grad=True
         self.gamma_rho.requires_grad=True
         self.min_power = 1 if ueg_limit else 0
-    def gen_features(self, inp):
 
-        inp_ss_s = (torch.abs(self.gamma_s)*inp[:,2:]**2)/(1+torch.abs(self.gamma_s)*inp[:,2:]**2)
-        inp_ss_rho = (torch.abs(self.gamma_rho)*inp[:,:2]**2)/(1+torch.abs(self.gamma_rho)*inp[:,:2]**2)
-        os_s = (inp[:,3:4]**2 + inp[:,2:3]**2)*.5
-        os_rho = (inp[:,0:1]**2 + inp[:,1:2]**2)*.5
-        inp_os_s = (torch.abs(self.gamma_s)*os_s)/(1+torch.abs(self.gamma_s)*os_s)
-        inp_os_rho = (torch.abs(self.gamma_rho)*os_rho)/(1+torch.abs(self.gamma_rho)*os_rho)
-        return (torch.stack([inp_ss_s**i*inp_ss_rho**j for i in range(self.min_power, self.max_order+1) for j in range(0, self.max_order+1)], dim=-1),
-                torch.cat([inp_os_s**i*inp_os_rho**j for i in range(self.min_power, self.max_order+1) for j in range(0, self.max_order+1)], dim=-1))
+    def gen_features(self, inp):
+        if self.n_input == 2:
+            inp_ss_s = (torch.abs(self.gamma_s)*inp[:,2:]**2)/(1+torch.abs(self.gamma_s)*inp[:,2:]**2)
+            inp_ss_rho = (torch.abs(self.gamma_rho)*inp[:,:2]**2)/(1+torch.abs(self.gamma_rho)*inp[:,:2]**2)
+            os_s = (inp[:,3:4]**2 + inp[:,2:3]**2)*.5
+            os_rho = (inp[:,0:1]**2 + inp[:,1:2]**2)*.5
+            inp_os_s = (torch.abs(self.gamma_s)*os_s)/(1+torch.abs(self.gamma_s)*os_s)
+            inp_os_rho = (torch.abs(self.gamma_rho)*os_rho)/(1+torch.abs(self.gamma_rho)*os_rho)
+            return (torch.stack([inp_ss_s**i*inp_ss_rho**j for i in range(self.min_power, self.max_order+1) for j in range(0, self.max_order+1)], dim=-1),
+                    torch.cat([inp_os_s**i*inp_os_rho**j for i in range(self.min_power, self.max_order+1) for j in range(0, self.max_order+1)], dim=-1))
+
+        elif self.n_input == 3:
+            inp_ss_s = (torch.abs(self.gamma_s)*inp[:,2:4]**2)/(1+torch.abs(self.gamma_s)*inp[:,2:4]**2)
+            inp_ss_rho = (torch.abs(self.gamma_rho)*inp[:,:2]**2)/(1+torch.abs(self.gamma_rho)*inp[:,:2]**2)
+            inp_ss_a = (torch.abs(self.gamma_a)*inp[:,4:]**2)/(1+torch.abs(self.gamma_a)*inp[:,4:]**2)
+            inp_ss_a = (inp_ss_a - 0.5)*2
+            os_s = (inp[:,3:4]**2 + inp[:,2:3]**2)*.5
+            os_rho = (inp[:,0:1]**2 + inp[:,1:2]**2)*.5
+            os_a = (inp[:,4:5]**2 + inp[:,5:6]**2)*.5
+            inp_os_s = (torch.abs(self.gamma_s)*os_s)/(1+torch.abs(self.gamma_s)*os_s)
+            inp_os_rho = (torch.abs(self.gamma_rho)*os_rho)/(1+torch.abs(self.gamma_rho)*os_rho)
+            inp_os_a = (torch.abs(self.gamma_a)*os_a)/(1+torch.abs(self.gamma_a)*os_a)
+            inp_os_a = (inp_os_a - 0.5)*2
+            return (torch.stack([inp_ss_s**i*inp_ss_rho**j*inp_ss_a**k for i in range(self.min_power, self.max_order+1) for j in range(0, self.max_order+1)\
+                        for k in range(self.min_power, self.max_order+1)], dim=-1),
+                    torch.cat([inp_os_s**i*inp_os_rho**j*inp_os_a**k for i in range(self.min_power, self.max_order+1) for j in range(0, self.max_order+1)\
+                        for k in range(self.min_power, self.max_order+1)], dim=-1))
 
     def forward(self, rho, **kwargs):
         inp_ss, inp_os = self.gen_features(rho[...,self.use])
@@ -575,6 +613,7 @@ class C_L_POL(torch.nn.Module):
         e_os = torch.einsum('i,...i',pars_os, inp_os).unsqueeze(-1)
         res = -torch.cat([e_ss,e_os],dim=-1)
         return res
+
 
 
 class XC_L(torch.nn.Module):
