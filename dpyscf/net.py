@@ -22,11 +22,11 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=F
             c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit and not freec)
         xc_level = 2
     elif xctype == 'MGGA':
-        lob = 1.174 if ueg_limit else 0 
+        lob = 1.174 if ueg_limit else 0
         if polynomial:
-            x = XC_L_POL(device=DEVICE, max_order=4, use=[1, 2], lob=lob, ueg_limit=ueg_limit, sdecay=True)
-            c = C_L_POL(device=DEVICE, max_order=3,  use=[0, 1, 2, 3, 4, 5], ueg_limit=ueg_limit)
-        else:   
+            x = XC_L_POL(device=DEVICE, max_order=4, use=[1, 2], lob=0, ueg_limit=ueg_limit, sdecay=True)
+            c = C_L_POL(device=DEVICE, max_order=4,  use=[0, 1, 2, 3, 4, 5], ueg_limit=ueg_limit)
+        else:
             x = XC_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=1.174, ueg_limit=ueg_limit) # PBE_X
             c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit and not freec)
         xc_level = 3
@@ -118,7 +118,7 @@ class XC(torch.nn.Module):
         self.grid_coords = None
         self.training = True
         self.meta_local = (meta_x is not None)
-        
+
         self.level = level
         self.epsilon = 1e-7
 #         self.epsilon = 10
@@ -150,7 +150,7 @@ class XC(torch.nn.Module):
             self.meta_x = torch.nn.Parameter(torch.Tensor([meta_x]))
         else:
             self.meta_x = 0
-            
+
     def evaluate(self):
         self.training=False
     def train(self):
@@ -177,6 +177,7 @@ class XC(torch.nn.Module):
 
         def l_3(rho, gamma, tau):
             return (tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon)
+            # return (uniform_factor*rho**(5/3))/(tau+self.epsilon)
 
         if not spin_scaling:
             zeta = (rho0_a - rho0_b)/(rho0_a + rho0_b + self.epsilon)
@@ -320,8 +321,8 @@ class XC(torch.nn.Module):
 #             else:
 #                 noise = torch.zeros_like(rho[0,0])
 
-            
-            
+
+
             rho0 = rho[0,0]
             drho = rho[0,1:4] + rho[1:4,0]
             tau = 0.5*(rho[1,1] + rho[2,2] + rho[3,3])
@@ -375,13 +376,13 @@ class XC(torch.nn.Module):
         else:
             rho0_a_ueg = rho0_a
             rho0_b_ueg = rho0_b
-            
+
         zeta = (rho0_a_ueg - rho0_b_ueg)/(rho0_a_ueg + rho0_b_ueg + 1e-8)
         rs = (4*np.pi/3*(rho0_a_ueg+rho0_b_ueg + 1e-8))**(-1/3)
         rs_a = (4*np.pi/3*(rho0_a_ueg + 1e-8))**(-1/3)
         rs_b = (4*np.pi/3*(rho0_b_ueg + 1e-8))**(-1/3)
-        
-        
+
+
         exc_a = torch.zeros_like(rho0_a)
         exc_b = torch.zeros_like(rho0_a)
         exc_ab = torch.zeros_like(rho0_a)
@@ -455,7 +456,7 @@ class XC(torch.nn.Module):
                 exc_b = self.heg_model(2*rho0_b_ueg)
             if self.pw_mult:
                 exc_ab = self.pw_model(rs, zeta)
-                
+
         if self.meta_local:
             exc = rho0_a_ueg/rho_tot*exc_a + rho0_b_ueg/rho_tot*exc_b + (rho0_a_ueg + rho0_b_ueg)/rho_tot*exc_ab
         else:
@@ -542,8 +543,6 @@ class XC_L_POL(torch.nn.Module):
         self.gamma_s = torch.nn.Parameter(torch.Tensor([0.2730]))
         self.gamma_s.requires_grad=True
         if self.n_input == 2:
-            self.gamma_a = torch.nn.Parameter(torch.Tensor([0.50]))
-            self.gamma_a.requires_grad=True
             self.gamma_dec = torch.nn.Parameter(torch.Tensor([4.9]))
             self.gamma_dec.requires_grad=True
         self.min_power = 1 if ueg_limit else 0
@@ -554,8 +553,7 @@ class XC_L_POL(torch.nn.Module):
             return torch.cat([inp**i for i in range(self.min_power, self.max_order+1)],dim=-1)
         elif self.n_input == 2:
             inp_1 = (self.gamma_s*inp[...,0]**2)/(1+self.gamma_s*inp[...,0]**2)
-            inp_2 = (self.gamma_a*inp[...,1]**2)/(1+self.gamma_a*inp[...,1]**2)
-            inp_2 = (inp_2 - 0.5)*2
+            inp_2 = (inp[...,1]-1)/(inp[...,1]+1)
             inp =  torch.stack([inp_1**i*inp_2**j for i in range(0, self.max_order+1)\
              for j in range(0, self.max_order+1)],dim=-1)
             if self.ueg_lim:
@@ -585,8 +583,10 @@ class C_L_POL(torch.nn.Module):
         super().__init__()
         self.spin_scaling = False
         self.n_input = int(len(use)/2)
+        if self.n_input ==3:
+            ueg_limit = False
         if ueg_limit:
-            self.n_freepar = (max_order+1)*(max_order)**(self.n_input - 1)
+            self.n_freepar = (max_order+1)**(self.n_input - 1)*(max_order)
         else:
             self.n_freepar = (max_order+1)**(self.n_input)
         # self.pars_ss = torch.nn.Linear(self.n_freepar, 1, bias=False)
@@ -595,11 +595,8 @@ class C_L_POL(torch.nn.Module):
         self.pars_os = torch.nn.Parameter(torch.Tensor([0.1]*(self.n_freepar)))
         self.max_order = max_order
         self.use = use
-        self.gamma_s = torch.nn.Parameter(torch.Tensor([0.2730]))
-        self.gamma_rho = torch.nn.Parameter(torch.Tensor([0.2]))
-        if self.n_input == 3:
-            self.gamma_a = torch.nn.Parameter(torch.Tensor([0.2]))
-            self.gamma_a.requires_grad=True
+        self.gamma_s = torch.nn.Parameter(torch.Tensor([0.02]))
+        self.gamma_rho = torch.nn.Parameter(torch.Tensor([0.02]))
         # self.pars.weight.data.fill_(([0.804]+[0]*(self.n_freepar-1))) # PBE parameters
         self.gamma_s.requires_grad=True
         self.gamma_rho.requires_grad=True
@@ -619,28 +616,34 @@ class C_L_POL(torch.nn.Module):
         elif self.n_input == 3:
             inp_ss_s = (torch.abs(self.gamma_s)*inp[:,2:4]**2)/(1+torch.abs(self.gamma_s)*inp[:,2:4]**2)
             inp_ss_rho = (torch.abs(self.gamma_rho)*inp[:,:2]**2)/(1+torch.abs(self.gamma_rho)*inp[:,:2]**2)
-            inp_ss_a = (torch.abs(self.gamma_a)*inp[:,4:]**2)/(1+torch.abs(self.gamma_a)*inp[:,4:]**2)
-            inp_ss_a = (inp_ss_a - 0.5)*2
+            inp_ss_a = (inp[:,4:]-1)/(inp[:,4:]+1)
             os_s = (inp[:,3:4]**2 + inp[:,2:3]**2)*.5
             os_rho = (inp[:,0:1]**2 + inp[:,1:2]**2)*.5
-            os_a = (inp[:,4:5]**2 + inp[:,5:6]**2)*.5
+            os_a = (inp[:,4:5] + inp[:,5:6])*.5
             inp_os_s = (torch.abs(self.gamma_s)*os_s)/(1+torch.abs(self.gamma_s)*os_s)
             inp_os_rho = (torch.abs(self.gamma_rho)*os_rho)/(1+torch.abs(self.gamma_rho)*os_rho)
-            inp_os_a = (torch.abs(self.gamma_a)*os_a)/(1+torch.abs(self.gamma_a)*os_a)
-            inp_os_a = (inp_os_a - 0.5)*2
+            inp_os_a = (os_a - 1)/(os_a + 1)
+            # return (torch.stack([inp_ss_s**i*inp_ss_rho**j*inp_ss_a**k for i in range(self.min_power, self.max_order+1) for j in range(0, self.max_order+1)\
+            #             for k in range(int(not (bool(i))), self.max_order+1)], dim=-1),
+            #         torch.cat([inp_os_s**i*inp_os_rho**j*inp_os_a**k for i in range(self.min_power, self.max_order+1) for j in range(0, self.max_order+1)\
+            #             for k in range(int(not (bool(i))), self.max_order+1)], dim=-1))
             return (torch.stack([inp_ss_s**i*inp_ss_rho**j*inp_ss_a**k for i in range(self.min_power, self.max_order+1) for j in range(0, self.max_order+1)\
-                        for k in range(self.min_power, self.max_order+1)], dim=-1),
+                        for k in range(0, self.max_order+1)], dim=-1),
                     torch.cat([inp_os_s**i*inp_os_rho**j*inp_os_a**k for i in range(self.min_power, self.max_order+1) for j in range(0, self.max_order+1)\
-                        for k in range(self.min_power, self.max_order+1)], dim=-1))
+                        for k in range(0, self.max_order+1)], dim=-1))
 
     def forward(self, rho, **kwargs):
         inp_ss, inp_os = self.gen_features(rho[...,self.use])
         # pars_ss = torch.abs(self.pars_ss)
         pars_ss = self.pars_ss
-        pars_ss = pars_ss/torch.sum(pars_ss)
+        if self.n_input ==2:
+        # if True:
+            pars_ss = pars_ss/torch.sum(pars_ss)
         # pars_os = torch.abs(self.pars_os)
         pars_os = self.pars_os
-        pars_os = pars_os/torch.sum(pars_os)
+        if self.n_input == 2:
+        # if True:
+            pars_os = pars_os/torch.sum(pars_os)
         e_ss = torch.einsum('i,...i',pars_ss, inp_ss)
         e_os = torch.einsum('i,...i',pars_os, inp_os).unsqueeze(-1)
         res = -torch.cat([e_ss,e_os],dim=-1)
