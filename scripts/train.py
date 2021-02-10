@@ -153,7 +153,8 @@ if __name__ == '__main__':
 #              pop = [29, 28, 27, 26, 25, 24, 23, 22, 21, 12, 7,  5, 2] # (Hybrid GGA)
             pop = [21, 12, 7,  5, 2] # (Hybrid GGA)
     else:
-        pop = [21, 12, 11, 10, 8, 7, 5, 4, 3, 0] # (Meta-GGA)
+#         pop = [21, 12, 11, 10, 8, 7, 5, 4, 3, 0] # (Meta-GGA)
+        pop = [12, 10, 7, 5] # (Meta-GGA)
 #         pop = [ 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 1, 0] # (Meta-GGA)
     # pop = []
     [atoms.pop(i) for i in pop]
@@ -190,10 +191,11 @@ if __name__ == '__main__':
     best_loss = 1e6
 
     scf = get_scf(args.modelpath)
-
+    
     if args.testrun:
         print("\n ======= Starting testrun ====== \n\n")
         scf.xc.evaluate()
+#         scf.xc.train()
         Es = []
         E_pretrained = []
         cnt = 0
@@ -207,8 +209,10 @@ if __name__ == '__main__':
             dm_ref = dm_ref.to(DEVICE)
             matrices = {key:matrices[key].to(DEVICE) for key in matrices}
             E_pretrained.append(matrices['e_pretrained'])
+     
             results = scf.forward(matrices['dm_realinit'], matrices, sc)
             E = results['E']
+
             if sc:
                 Es.append(E.detach().cpu().numpy())
             else:

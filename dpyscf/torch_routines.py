@@ -172,12 +172,20 @@ class SCF(torch.nn.Module):
                 vxc = torch.autograd.functional.jacobian(self.xc, dm, create_graph=True)
                 if vxc.dim() > 2:
                     vxc = torch.einsum('ij,xjk,kl->xil',L,vxc,L.T)
-                    vxc = vxc*scaling.unsqueeze(0)
+                    vxc = torch.where(scaling.unsqueeze(0) > 0 , vxc, scaling.unsqueeze(0))
+#                     vxc = vxc*scaling.unsqueeze(0)
 
                 else:
                     vxc = torch.mm(L,torch.mm(vxc,L.T))
-                    vxc = vxc*scaling
-
+#                     vxc = vxc*scaling
+                    vxc = torch.where(scaling > 0 , vxc, scaling)
+                
+                if self.xc.training:
+                    if self.training:
+                        noise = torch.abs(torch.randn(vxc.size(),device=vxc.device)*1e-8)
+                        noise = noise + torch.transpose(noise,-1,-2)
+                    vxc = vxc + noise
+                    
                 if torch.sum(mo_occ) == 1:   # Otherwise H produces NaNs
                     vxc[1] = torch.zeros_like(vxc[1])
             else:
