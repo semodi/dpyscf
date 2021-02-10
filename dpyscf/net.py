@@ -511,10 +511,11 @@ class XC_L_POL(torch.nn.Module):
         self.use = use
         self.gamma_s = torch.nn.Parameter(torch.Tensor([0.2730]))
         self.gamma_s.requires_grad=True
-        self.gamma_a = torch.nn.Parameter(torch.Tensor([0.50]))
-        self.gamma_a.requires_grad=True
-        self.gamma_dec = torch.nn.Parameter(torch.Tensor([4.9]))
-        self.gamma_dec.requires_grad=True
+        if self.n_input == 2:
+            self.gamma_a = torch.nn.Parameter(torch.Tensor([0.50]))
+            self.gamma_a.requires_grad=True
+            self.gamma_dec = torch.nn.Parameter(torch.Tensor([4.9]))
+            self.gamma_dec.requires_grad=True
         self.min_power = 1 if ueg_limit else 0
 
     def gen_features(self, inp):
@@ -566,8 +567,9 @@ class C_L_POL(torch.nn.Module):
         self.use = use
         self.gamma_s = torch.nn.Parameter(torch.Tensor([0.2730]))
         self.gamma_rho = torch.nn.Parameter(torch.Tensor([0.2]))
-        self.gamma_a = torch.nn.Parameter(torch.Tensor([0.2]))
-        self.gamma_a.requires_grad=True
+        if self.n_input == 3:
+            self.gamma_a = torch.nn.Parameter(torch.Tensor([0.2]))
+            self.gamma_a.requires_grad=True
         # self.pars.weight.data.fill_(([0.804]+[0]*(self.n_freepar-1))) # PBE parameters
         self.gamma_s.requires_grad=True
         self.gamma_rho.requires_grad=True
