@@ -10,7 +10,7 @@ from ase import Atoms
 from ase.io import read
 from .torch_routines import *
 
-def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=False, ueg_limit=True, meta_x=None):
+def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=False, ueg_limit=True, meta_x=None, freec=False):
 
     if xctype == 'GGA':
         lob = 1.804 if ueg_limit else 0
@@ -19,11 +19,16 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=F
             c = C_L_POL(device=DEVICE, max_order=8,  use=[0, 1, 2, 3], ueg_limit=ueg_limit)
         else:
             x = XC_L(device=DEVICE,n_input=1, n_hidden=16, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
-            c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit)
+            c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit and not freec)
         xc_level = 2
     elif xctype == 'MGGA':
-        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=1.174, ueg_limit=ueg_limit) # PBE_X
-        c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit)
+        lob = 1.174 if ueg_limit else 0 
+        if polynomial:
+            x = XC_L_POL(device=DEVICE, max_order=4, use=[1, 2], lob=lob, ueg_limit=ueg_limit, sdecay=True)
+            c = C_L_POL(device=DEVICE, max_order=3,  use=[0, 1, 2, 3, 4, 5], ueg_limit=ueg_limit)
+        else:   
+            x = XC_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=1.174, ueg_limit=ueg_limit) # PBE_X
+            c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit and not freec)
         xc_level = 3
     print("Loading pre-trained models from " + pretrain_loc)
     x.load_state_dict(torch.load(pretrain_loc + '/x'))
