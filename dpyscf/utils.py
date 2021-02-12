@@ -182,7 +182,7 @@ def gen_atomic_grids(mol, atom_grid={}, radi_method=radi.gauss_chebyshev,
             atom_grids_tab[symb] = coords, weights
     return atom_grids_tab
 
-def half_circle(mf, mol, level, n_ang = 25, sample = 1):
+def half_circle(mf, mol, level, n_ang = 25):
 
     atom_grids_tab = gen_atomic_grids(mol,level=level,nang=n_ang)
 
@@ -200,13 +200,7 @@ def half_circle(mf, mol, level, n_ang = 25, sample = 1):
     print('Number of grid points (level = {}, n_ang = {}):'.format(level,n_ang), len(pruned.weights))
     coords = pruned.coords
     weights = pruned.weights
-    if sample < 1:
-        select = np.arange(len(coords))
-        np.random.shuffle(select)
-        select = select[:int(sample*len(select))]
-        coords = coords[select]
-        weights = weights[select]
-        
+    
     return coords, weights
 
 def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
@@ -388,62 +382,14 @@ def get_m_mask(mol):
 
 def get_L(mol):
     
-#     pys = np.where(['py' in l for l in mol.ao_labels()])[0]
-#     pxs = np.where(['px' in l for l in mol.ao_labels()])[0]
-
-#     dxys = np.where(['dxy' in l for l in mol.ao_labels()])[0]
-#     dx2y2s = np.where(['dx2-y2' in l for l in mol.ao_labels()])[0]
-#     dyzs = np.where(['dyz' in l for l in mol.ao_labels()])[0]
-#     dxzs = np.where(['dxz' in l for l in mol.ao_labels()])[0]
-    
-#     fx3s = np.where(['fx^3' in l for l in mol.ao_labels()])[0]
-#     fy3s = np.where(['fy^3' in l for l in mol.ao_labels()])[0]
-
-#     fzx2s = np.where(['fzx^2' in l for l in mol.ao_labels()])[0]
-#     fxyzs =  np.where(['fxyz' in l for l in mol.ao_labels()])[0]
-
-#     fxz2s = np.where(['fxz^2' in l for l in mol.ao_labels()])[0]
-#     fyz2s =  np.where(['fyz^2' in l for l in mol.ao_labels()])[0]
-
-#     L = np.eye(len(mol.ao_labels()))
-#     for px,py in zip(pxs,pys):
-#         L[px,py] = 2/np.sqrt(2)
-#         L[py,py] = 1/np.sqrt(2)
-#         L[px,px] = 1/np.sqrt(2)
-        
-#     for dxy,dx2y2 in zip(dxys,dx2y2s):
-#         L[dxy,dx2y2] = 2/np.sqrt(2)
-#         L[dx2y2,dx2y2] = 1/np.sqrt(2)
-#         L[dxy,dxy] = 1/np.sqrt(2)
-        
-#     for dyz,dxz in zip(dyzs,dxzs):
-#         L[dyz,dxz] = 2/np.sqrt(2)
-#         L[dxz,dxz] = 1/np.sqrt(2)
-#         L[dyz,dyz] = 1/np.sqrt(2)
-        
-#     for fx3, fy3 in zip(fx3s,fy3s):
-#         L[fy3,fx3] = 2/np.sqrt(2)
-#         L[fx3,fx3] = 1/np.sqrt(2)
-#         L[fy3,fy3] = 1/np.sqrt(2)
-        
-#     for fzx2, fxyz in zip(fzx2s,fxyzs):
-#         L[fxyz,fzx2] = 2/np.sqrt(2)
-#         L[fzx2,fzx2] = 1/np.sqrt(2)
-#         L[fxyz,fxyz] = 1/np.sqrt(2)
-        
-#     for fxz2, fyz2 in zip(fxz2s,fyz2s):
-#         L[fyz2, fxz2]  = 2/np.sqrt(2)
-#         L[fxz2, fxz2]  = 1/np.sqrt(2)
-#         L[fyz2, fyz2]  = 1/np.sqrt(2)
-        
-#     L = .5*(L + L.T)
     pys = np.where(['py' in l for l in mol.ao_labels()])[0]
     pxs = np.where(['px' in l for l in mol.ao_labels()])[0]
 
     dxys = np.where(['dxy' in l for l in mol.ao_labels()])[0]
     dx2y2s = np.where(['dx2-y2' in l for l in mol.ao_labels()])[0]
     dyzs = np.where(['dyz' in l for l in mol.ao_labels()])[0]
-
+    dxzs = np.where(['dxz' in l for l in mol.ao_labels()])[0]
+    
     fx3s = np.where(['fx^3' in l for l in mol.ao_labels()])[0]
     fy3s = np.where(['fy^3' in l for l in mol.ao_labels()])[0]
 
@@ -453,24 +399,38 @@ def get_L(mol):
     fxz2s = np.where(['fxz^2' in l for l in mol.ao_labels()])[0]
     fyz2s =  np.where(['fyz^2' in l for l in mol.ao_labels()])[0]
 
-
     L = np.eye(len(mol.ao_labels()))
-
     for px,py in zip(pxs,pys):
-        L[py,px] = 1
-    for dxy,dx2y2,dyz in zip(dxys,dx2y2s,dyzs):
-        L[dxy,dx2y2] = 1
-        L[dyz,dx2y2] = 1
-
-    for fx3, fy3 in zip(fx3s,fy3s):
-        L[fy3,fx3] = 1
-
-    for fzx2, fxyz in zip(fzx2s,fxyzs):
-        L[fxyz,fzx2] = 1
-
-    for fxz2, fyz2 in zip(fxz2s,fyz2s):
-        L[fyz2, fxz2] = 1
+        L[px,py] = 2/np.sqrt(2)
+        L[py,py] = 1/np.sqrt(2)
+        L[px,px] = 1/np.sqrt(2)
         
+    for dxy,dx2y2 in zip(dxys,dx2y2s):
+        L[dxy,dx2y2] = 2/np.sqrt(2)
+        L[dx2y2,dx2y2] = 1/np.sqrt(2)
+        L[dxy,dxy] = 1/np.sqrt(2)
+        
+    for dyz,dxz in zip(dyzs,dxzs):
+        L[dyz,dxz] = 2/np.sqrt(2)
+        L[dxz,dxz] = 1/np.sqrt(2)
+        L[dyz,dyz] = 1/np.sqrt(2)
+        
+    for fx3, fy3 in zip(fx3s,fy3s):
+        L[fy3,fx3] = 2/np.sqrt(2)
+        L[fx3,fx3] = 1/np.sqrt(2)
+        L[fy3,fy3] = 1/np.sqrt(2)
+        
+    for fzx2, fxyz in zip(fzx2s,fxyzs):
+        L[fxyz,fzx2] = 2/np.sqrt(2)
+        L[fzx2,fzx2] = 1/np.sqrt(2)
+        L[fxyz,fxyz] = 1/np.sqrt(2)
+        
+    for fxz2, fyz2 in zip(fxz2s,fyz2s):
+        L[fyz2, fxz2]  = 2/np.sqrt(2)
+        L[fxz2, fxz2]  = 1/np.sqrt(2)
+        L[fyz2, fyz2]  = 1/np.sqrt(2)
+        
+    L = .5*(L + L.T)
     return L
 
 def get_symmetrized_grid(mol, mf, n_rad=20, n_ang=10, print_stat=True, method= half_circle, return_errors = False):
