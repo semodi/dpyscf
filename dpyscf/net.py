@@ -25,7 +25,7 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=F
         lob = 1.174 if ueg_limit else 0
         if polynomial:
             x = XC_L_POL(device=DEVICE, max_order=4, use=[1, 2], lob=0, ueg_limit=ueg_limit, sdecay=True)
-            c = C_L_POL(device=DEVICE, max_order=4,  use=[0, 1, 2, 3, 4, 5], ueg_limit=ueg_limit)
+            c = C_L_POL(device=DEVICE, max_order=3,  use=[0, 1, 2, 3, 4, 5], ueg_limit=ueg_limit)
         else:
             x = XC_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=1.174, ueg_limit=ueg_limit) # PBE_X
             c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit and not freec)
@@ -286,7 +286,7 @@ class XC(torch.nn.Module):
             else:
                 # descr4 = (tau_a + tau_b - (gamma_a + gamma_b+2*gamma_ab)/(8*(rho0_a + rho0_b + self.epsilon)))/(self.epsilon+(rho0_a + rho0_b)**(5/3)*((1+zeta)**(5/3) + (1-zeta)**(5/3))) # tau
                 descr4 = l_3(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab, tau_a + tau_b)
-                descr4 = descr4/((1+zeta)**(5/3) + (1-zeta)**(5/3))
+                descr4 = 2*descr4/((1+zeta)**(5/3) + (1-zeta)**(5/3))
                 descr4 = descr4**3/(descr4**2+self.epsilon)
                 descr4 = descr4.unsqueeze(-1)
             descr4 = torch.log((descr4 + 1)/2)
