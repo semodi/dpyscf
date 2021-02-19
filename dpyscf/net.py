@@ -287,7 +287,7 @@ class XC(torch.nn.Module):
             else:
                 # descr4 = (tau_a + tau_b - (gamma_a + gamma_b+2*gamma_ab)/(8*(rho0_a + rho0_b + self.epsilon)))/(self.epsilon+(rho0_a + rho0_b)**(5/3)*((1+zeta)**(5/3) + (1-zeta)**(5/3))) # tau
                 descr4 = l_3(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab, tau_a + tau_b)
-                descr4 = descr4/((1+zeta)**(5/3) + (1-zeta)**(5/3))
+                descr4 = 2*descr4/((1+zeta)**(5/3) + (1-zeta)**(5/3))
                 descr4 = descr4**3/(descr4**2+self.epsilon)
                 descr4 = descr4.unsqueeze(-1)
             descr4 = torch.log((descr4 + 1)/2)
