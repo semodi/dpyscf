@@ -144,6 +144,8 @@ class XC(torch.nn.Module):
         self.model_mult = [1 for m in self.grid_models]
         if exx_a is not None:
             self.exx_a = torch.nn.Parameter(torch.Tensor([exx_a]))
+            self.exx_a.requires_grad = False
+#             self.exx_a = exx_a
         else:
 #             self.register_buffer('exx_a', torch.Tensor([0]))
             self.exx_a = 0
@@ -163,7 +165,8 @@ class XC(torch.nn.Module):
 
     def add_exx_a(self, exx_a):
         self.exx_a = torch.nn.Parameter(torch.Tensor([exx_a]))
-
+        self.exx_a.requires_grad = False
+#         self.exx_a = exx_a
 
     def get_descriptors_pol(self, rho0_a, rho0_b, gamma_a, gamma_b, gamma_ab, tau_a, tau_b, spin_scaling = False):
 
