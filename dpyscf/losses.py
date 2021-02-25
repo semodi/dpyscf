@@ -1,5 +1,7 @@
 import torch
 import numpy as np
+from opt_einsum import contract
+
 def ip_loss(results, loss, **kwargs):
     e_ip = results['e_ip'].unsqueeze(-1)
     e_ip_ref = results['e_ip_ref']
@@ -44,9 +46,9 @@ def dm_loss(results, loss, **kwargs):
     fcenter = results['fcenter'][0]
     dm = results['dm']
     dm_ref = results['dm_ref'][0]
-    ddm = torch.einsum('ijkl,ij,kl',fcenter,dm,dm) +\
-                torch.einsum('ijkl,ij,kl',fcenter,dm_ref,dm_ref) -\
-                2*torch.einsum('ijkl,ij,kl',fcenter,dm,dm_ref)
+    ddm = contract('ijkl,ij,kl',fcenter,dm,dm) +\
+                contract('ijkl,ij,kl',fcenter,dm_ref,dm_ref) -\
+                2*contract('ijkl,ij,kl',fcenter,dm,dm_ref)
     ldm = loss(ddm/results['n_elec'][0,0]**2, torch.zeros_like(ddm))
     return ldm
 
@@ -55,14 +57,14 @@ def rho_loss(results, loss, **kwargs):
     ao_eval = results['ao_eval'][0]
     dm = results['dm']
     if dm.ndim == 2:
-        rho = torch.einsum('ij,ik,jk->i',
+        rho = contract('ij,ik,jk->i',
                            ao_eval[0], ao_eval[0], dm)
         drho = torch.sqrt(torch.sum((rho-rho_ref)**2*results['grid_weights'])/results['n_elec'][0,0]**2)
 #         drho = (rho-rho_ref)*torch.sqrt(results['grid_weights'])/results['n_elec'][0,0]
         lrho = loss(drho, torch.zeros_like(drho))
 
     else:
-        rho = torch.einsum('ij,ik,xjk->xi',
+        rho = contract('ij,ik,xjk->xi',
                            ao_eval[0], ao_eval[0], dm)
         if torch.sum(results['mo_occ']) == 1:
             drho = torch.sqrt(torch.sum((rho[0]-rho_ref[0])**2*results['grid_weights'])/torch.sum(results['mo_occ'][0,0])**2)
@@ -74,6 +76,28 @@ def rho_loss(results, loss, **kwargs):
 #                           (rho[1]-rho_ref[1])*torch.sqrt(results['grid_weights'])/results['n_elec'][0,0]])
 
         lrho = loss(drho, torch.zeros_like(drho))
+    return lrho
+
+def rho_alt_loss(results, loss, **kwargs):
+    rho_ref = results['rho'][0]
+    ao_eval = results['ao_eval'][0]
+    dm = results['dm']
+    rho = contract('ij,ik,...jk->...i',
+                       ao_eval[0], ao_eval[0], dm)
+    if rho.ndim == 2:
+        if torch.sum(results['mo_occ']) == 1:
+            rho = rho[0]
+        else:
+            rho = torch.sum(rho, dim=0)
+    if rho_ref.ndim == 2:
+        if torch.sum(results['mo_occ']) == 1:
+            rho_ref = rho_ref[0]
+        else:
+            rho_ref = torch.sum(rho_ref, dim=0)
+        
+    drho = torch.sqrt(torch.sum((rho-rho_ref)**2*results['grid_weights'])/results['n_elec'][0,0]**2)
+    lrho = loss(drho, torch.zeros_like(drho))
+
     return lrho
 
 def moe_loss(results, loss, **kwargs):

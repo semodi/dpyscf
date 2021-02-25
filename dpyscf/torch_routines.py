@@ -1,6 +1,6 @@
 import torch
 import scipy
-
+from opt_einsum import contract
 
 
 
@@ -14,9 +14,9 @@ class get_veff(torch.nn.Module):
         self.model = model
 
     def forward(self, dm, eri):
-        J = torch.einsum('...ij,ijkl->...kl',dm, eri)
+        J = contract('...ij,ijkl->...kl',dm, eri)
         if not self.xc:
-            K = self.model.exx_a * torch.einsum('...ij,ikjl->...kl',dm, eri)
+            K = self.model.exx_a * contract('...ij,ikjl->...kl',dm, eri)
         else:
             K =  torch.zeros_like(J)
 
@@ -56,10 +56,10 @@ class eig(torch.nn.Module):
 
         .. math:: HC = SCE
         '''
-#         e, c = torch.symeig(torch.einsum('ij,jk,kl->il',s_inv_oh, h, s_inv_oh), eigenvectors=True,upper=False)
+#         e, c = torch.symeig(contract('ij,jk,kl->il',s_inv_oh, h, s_inv_oh), eigenvectors=True,upper=False)
 #         c = torch.mm(s_inv_oh, c)
-        e, c = torch.symeig(torch.einsum('ij,...jk,kl->...il',s_oh, h, s_inv_oh), eigenvectors=True,upper=False)
-        c = torch.einsum('ij,...jk ->...ik',s_inv_oh, c)
+        e, c = torch.symeig(contract('ij,...jk,kl->...il',s_oh, h, s_inv_oh), eigenvectors=True,upper=False)
+        c = contract('ij,...jk ->...ik',s_inv_oh, c)
         return e, c
 
 
@@ -70,7 +70,7 @@ class energy_tot(torch.nn.Module):
         super().__init__()
 
     def forward(self, dm, hcore, veff):
-        return torch.sum((torch.einsum('...ij,ij', dm, hcore) + .5*torch.einsum('...ij,...ij', dm, veff))).unsqueeze(0)
+        return torch.sum((contract('...ij,ij', dm, hcore) + .5*contract('...ij,...ij', dm, veff))).unsqueeze(0)
 
 class make_rdm1(torch.nn.Module):
 
@@ -82,14 +82,14 @@ class make_rdm1(torch.nn.Module):
             mocc_a = mo_coeff[0, :, mo_occ[0]>0]
             mocc_b = mo_coeff[1, :, mo_occ[1]>0]
             if torch.sum(mo_occ[1]) > 0:
-                return torch.stack([torch.einsum('ij,jk->ik', mocc_a*mo_occ[0,mo_occ[0]>0], mocc_a.T),
-                                    torch.einsum('ij,jk->ik', mocc_b*mo_occ[1,mo_occ[1]>0], mocc_b.T)],dim=0)
+                return torch.stack([contract('ij,jk->ik', mocc_a*mo_occ[0,mo_occ[0]>0], mocc_a.T),
+                                    contract('ij,jk->ik', mocc_b*mo_occ[1,mo_occ[1]>0], mocc_b.T)],dim=0)
             else:
-                return torch.stack([torch.einsum('ij,jk->ik', mocc_a*mo_occ[0,mo_occ[0]>0], mocc_a.T),
+                return torch.stack([contract('ij,jk->ik', mocc_a*mo_occ[0,mo_occ[0]>0], mocc_a.T),
                                     torch.zeros_like(mo_coeff)[0]],dim=0)
         else:
             mocc = mo_coeff[:, mo_occ>0]
-            return torch.einsum('ij,jk->ik', mocc*mo_occ[mo_occ>0], mocc.T)
+            return contract('ij,jk->ik', mocc*mo_occ[mo_occ>0], mocc.T)
 
 def diis(deltadm):
 
@@ -171,7 +171,7 @@ class SCF(torch.nn.Module):
                 
                 vxc = torch.autograd.functional.jacobian(self.xc, dm, create_graph=True)
                 if vxc.dim() > 2:
-                    vxc = torch.einsum('ij,xjk,kl->xil',L,vxc,L.T)
+                    vxc = contract('ij,xjk,kl->xil',L,vxc,L.T)
                     vxc = torch.where(scaling.unsqueeze(0) > 0 , vxc, scaling.unsqueeze(0))
 #                     vxc = vxc*scaling.unsqueeze(0)
 
@@ -179,20 +179,24 @@ class SCF(torch.nn.Module):
                     vxc = torch.mm(L,torch.mm(vxc,L.T))
 #                     vxc = vxc*scaling
                     vxc = torch.where(scaling > 0 , vxc, scaling)
-                
-                if self.xc.training:
-                    if self.training:
-                        noise = torch.abs(torch.randn(vxc.size(),device=vxc.device)*1e-8)
-                        noise = noise + torch.transpose(noise,-1,-2)
-                    vxc = vxc + noise
-                    
+    
                 if torch.sum(mo_occ) == 1:   # Otherwise H produces NaNs
                     vxc[1] = torch.zeros_like(vxc[1])
+                
+                veff += vxc
+                if self.xc.training:
+                    
+                    noise = torch.abs(torch.randn(vxc.size(),device=vxc.device)*1e-8)
+#                         noise = torch.abs(torch.randn(vxc.size(),device=vxc.device)*1e-5)
+                    noise = noise + torch.transpose(noise,-1,-2)
+                    veff = veff + noise
+#                     vxc = vxc*(1 + noise)
+                
             else:
                 exc=0
                 vxc=torch.zeros_like(veff)
 
-            veff += vxc
+            
             f = get_fock(hc, veff)
             if sc:
                 try:

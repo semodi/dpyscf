@@ -9,14 +9,15 @@ import scipy
 from ase import Atoms
 from ase.io import read
 from .torch_routines import *
+from opt_einsum import contract
 
 def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=False, ueg_limit=True, meta_x=None, freec=False):
-
+    print('FREEC', freec)
     if xctype == 'GGA':
         lob = 1.804 if ueg_limit else 0
         if polynomial:
             x = XC_L_POL(device=DEVICE, max_order=3, use=[1], lob=lob, ueg_limit=ueg_limit)
-            c = C_L_POL(device=DEVICE, max_order=8,  use=[0, 1, 2, 3], ueg_limit=ueg_limit)
+            c = C_L_POL(device=DEVICE, max_order=8,  use=[0, 1, 2, 3], ueg_limit=ueg_limit and not freec)
         else:
             x = XC_L(device=DEVICE,n_input=1, n_hidden=16, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
             c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit and not freec)
@@ -93,7 +94,7 @@ class Symmetrizer(torch.nn.Module):
         self.M = torch.from_numpy(M).to(device)
 
     def forward(self, input):
-        return torch.sqrt(torch.einsum('ij,...j',self.M,torch.pow(input,2)))
+        return torch.sqrt(contract('ij,...j',self.M,torch.pow(input,2)))
 
 def get_M(basis):
     bp = neuralxc.pyscf.BasisPadder(gto.M(atom='O 0 0 0', basis=gto.parse(open(basis,'r').read())))
@@ -143,6 +144,8 @@ class XC(torch.nn.Module):
         self.model_mult = [1 for m in self.grid_models]
         if exx_a is not None:
             self.exx_a = torch.nn.Parameter(torch.Tensor([exx_a]))
+            self.exx_a.requires_grad = False
+#             self.exx_a = exx_a
         else:
 #             self.register_buffer('exx_a', torch.Tensor([0]))
             self.exx_a = 0
@@ -162,7 +165,8 @@ class XC(torch.nn.Module):
 
     def add_exx_a(self, exx_a):
         self.exx_a = torch.nn.Parameter(torch.Tensor([exx_a]))
-
+        self.exx_a.requires_grad = False
+#         self.exx_a = exx_a
 
     def get_descriptors_pol(self, rho0_a, rho0_b, gamma_a, gamma_b, gamma_ab, tau_a, tau_b, spin_scaling = False):
 
@@ -307,22 +311,7 @@ class XC(torch.nn.Module):
             else:
                 ao_eval = self.ao_eval
 
-#             if self.training:
-#                 noise = torch.abs(torch.randn(dm.size(),device=dm.device)*1e-8)
-#                 noise = noise + torch.transpose(noise,-1,-2)
-#             else:
-#                 noise = torch.zeros_like(dm)
-
-#             rho = torch.einsum('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm + noise)
-            rho = torch.einsum('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm)
-#             rho = torch.einsum('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm)
-#             if self.training:
-#                 noise = torch.abs(torch.randn(rho[0,0].size(),device=rho[0,0].device)*1e-4)
-#             else:
-#                 noise = torch.zeros_like(rho[0,0])
-
-
-
+            rho = contract('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm)
             rho0 = rho[0,0]
             drho = rho[0,1:4] + rho[1:4,0]
             tau = 0.5*(rho[1,1] + rho[2,2] + rho[3,3])
@@ -331,12 +320,12 @@ class XC(torch.nn.Module):
                 rho0_a = rho0[0]
                 rho0_b = rho0[1]
 
-                gamma_a, gamma_b = torch.einsum('ij,ij->j',drho[:,0],drho[:,0]), torch.einsum('ij,ij->j',drho[:,1],drho[:,1])
-                gamma_ab = torch.einsum('ij,ij->j',drho[:,0],drho[:,1])
+                gamma_a, gamma_b = contract('ij,ij->j',drho[:,0],drho[:,0]), contract('ij,ij->j',drho[:,1],drho[:,1])
+                gamma_ab = contract('ij,ij->j',drho[:,0],drho[:,1])
                 tau_a, tau_b = tau
             else:
                 rho0_a = rho0_b = rho0*0.5
-                gamma_a=gamma_b=gamma_ab= torch.einsum('ij,ij->j',drho[:],drho[:])*0.25
+                gamma_a=gamma_b=gamma_ab= contract('ij,ij->j',drho[:],drho[:])*0.25
                 tau_a = tau_b = tau*0.5
 
             exc = self.eval_grid_models(torch.cat([rho0_a.unsqueeze(-1),
@@ -478,7 +467,7 @@ class NXC(torch.nn.Module):
                         ).double().to(device)
 
     def forward(self, dm, ml_ovlp):
-        coeff = torch.einsum('ij,ijlk->lk', dm, ml_ovlp)
+        coeff = contract('ij,ijlk->lk', dm, ml_ovlp)
         return self.ml_net(coeff)
 
 class C_L(torch.nn.Module):
@@ -574,7 +563,7 @@ class XC_L_POL(torch.nn.Module):
             pars = self.pars/torch.sum(self.pars)*(self.lob-1)
         else:
             pars = self.pars
-        results = (torch.einsum('i,...i', pars, inp)+1)*decay - 1
+        results = (contract('i,...i', pars, inp)+1)*decay - 1
         return results.squeeze( )
 
 class C_L_POL(torch.nn.Module):
@@ -644,8 +633,8 @@ class C_L_POL(torch.nn.Module):
         if self.n_input == 2:
         # if True:
             pars_os = pars_os/torch.sum(pars_os)
-        e_ss = torch.einsum('i,...i',pars_ss, inp_ss)
-        e_os = torch.einsum('i,...i',pars_os, inp_os).unsqueeze(-1)
+        e_ss = contract('i,...i',pars_ss, inp_ss)
+        e_os = contract('i,...i',pars_os, inp_os).unsqueeze(-1)
         res = -torch.cat([e_ss,e_os],dim=-1)
         return res
 
