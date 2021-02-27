@@ -13,7 +13,7 @@ import pickle
 import numpy
 from pyscf.dft import radi
 import os
-
+from pyscf import df
 
 
 
@@ -209,10 +209,23 @@ def half_circle(mf, mol, level, n_ang = 25, sample=1):
         weights = weights[samp[:n_samp]]
     return coords, weights
 
+def get_v_aux(cs, mol, omega=0): 
+    fakemol = gto.fakemol_for_charges(cs,)
+#     return df.incore.aux_e2(mol, fakemol, intor='int3c2e')
+    tot_mol = mol + fakemol
+    full = tot_mol.intor('int2c2e', shls_slice=[0, mol.nbas, mol.nbas, mol.nbas + fakemol.nbas])
+    if omega:
+        tot_mol.set_range_coulomb(omega)
+        rs = tot_mol.intor('int2c2e', shls_slice=[0, mol.nbas, mol.nbas, mol.nbas + fakemol.nbas])
+    else: 
+        rs = 0
+    return full - rs
+    
+
 def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
                   nl_cutoff=0, grid_deriv=1, init_guess = False, ml_basis='',
                   do_fcenter=True, zsym = False, n_rad=20,n_ang=10, spin=0, pol=False,
-                  ref_basis='', ref_path = '', ref_index=0):
+                  ref_basis='', ref_path = '', ref_index=0, dfit = False, non_local= False, omega=0):
 
     print(atoms)
     print(basis)
@@ -251,11 +264,21 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         auxmol = gto.M(atom=mol_input,spin=spin, basis=gto.parse(open(ml_basis,'r').read()))
         ml_ovlp = get_mlovlp(mol,auxmol)
         features.update({'ml_ovlp':ml_ovlp})
-        
+    
+    
     s = mol.intor('int1e_ovlp')
     t = mol.intor('int1e_kin')
     v = mol.intor('int1e_nuc')
     eri = mol.intor('int2e')
+    if dfit:
+        auxbasis = df.addons.make_auxbasis(mol,mp2fit=False)
+        auxmol = df.addons.make_auxmol(mol, auxbasis)
+        df_3c = df.incore.aux_e2(mol, auxmol, 'int3c2e', aosym='s1', comp=1)
+        df_2c = auxmol.intor('int2c2e', aosym='s1', comp=1)
+        df_2c_inv = scipy.linalg.pinv(df_2c)
+    
+  
+        
     if do_fcenter:
         fcenter = mol.intor('int4c1e')
 
@@ -305,7 +328,11 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
                 'ip_idx': ip_idx,
                 'e_pretrained': e_base}
 
+    if dfit:
+        matrices.update({'df_2c_inv':df_2c_inv,
+                         'df_3c': df_3c})
 
+        
     if not init_guess:
         matrices['dm_realinit'] = dm_realinit
 
@@ -331,11 +358,7 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
             mf.xc = xc
         mf.kernel()
         if zsym and not nl_cutoff:
-            if len(pos) == 1:
-                method = line
-#                 method = half_circle
-            else:
-                method = half_circle
+            method = half_circle
             mf.grids.coords, mf.grids.weights, L, scaling = get_symmetrized_grid(mol, mf, n_rad, n_ang, method=method)
             features.update({'L': L, 'scaling': scaling})
         else:
@@ -350,6 +373,12 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         features.update({'rho': rho,
                          'ao_eval':mf._numint.eval_ao(mol, mf.grids.coords, deriv=grid_deriv),
                          'grid_weights':mf.grids.weights})
+        if non_local:
+            if not isinstance(omega, list):
+                omega = [omega]
+                
+            vh_on_grid = np.stack([get_v_aux(mf.grids.coords, auxmol, o) for o in omega], axis=-1)
+            features.update({'vh_on_grid':vh_on_grid})
 #         if nl_cutoff:
 #             grid_coords = mf.grids.coords
 #             coords = grid_coords

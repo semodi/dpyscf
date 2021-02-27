@@ -8,10 +8,12 @@ def get_hcore(v, t):
     return v + t
 
 class get_veff(torch.nn.Module):
-    def __init__(self, xc=False, model=None):
+    def __init__(self, xc=False, model=None, df= False):
         super().__init__()
         self.xc = xc
         self.model = model
+        if df:
+            self.forward = self.forward_df
 
     def forward(self, dm, eri):
         J = contract('...ij,ijkl->...kl',dm, eri)
@@ -24,7 +26,21 @@ class get_veff(torch.nn.Module):
             return J[0] + J[1] - K
         else:
             return J-0.5*K
+    
+    def forward_df(self, dm, df_3c, df_2c_inv, eri):
+        
+        J = contract('mnQ, QP, ...ij, ijP->...mn', df_3c, df_2c_inv, dm, df_3c)
+        if not self.xc:
+            K = self.model.exx_a * contract('...ij,ikjl->...kl',dm, eri)
+        else:
+            K =  torch.zeros_like(J)
 
+        if J.ndim == 3:
+            return J[0] + J[1] - K
+        else:
+            return J-0.5*K
+        
+    
 def get_fock(hc, veff):
     return hc + veff
 
@@ -137,6 +153,10 @@ class SCF(torch.nn.Module):
         L = matrices.get('L', [torch.eye(dm.size()[-1])])[0]
         scaling = matrices.get('scaling',[torch.ones([dm.size()[-1]]*2)])[0]
         ip_idx = matrices.get('ip_idx', [0])[0]
+        df_2c_inv = matrices.get('df_2c_inv',[None])[0] 
+        df_3c = matrices.get('df_3c',[None])[0] 
+        vh_on_grid = matrices.get('vh_on_grid',[None])[0]
+        
         dm_old = dm
 
         E = []
@@ -158,7 +178,10 @@ class SCF(torch.nn.Module):
             dm_old = dm
 
             hc = get_hcore(v,t)
-            veff = self.get_veff(dm, eri)
+            if df_3c is not None:
+                veff = self.get_veff.forward_df(dm, df_3c, df_2c_inv, eri)
+            else:
+                veff = self.get_veff(dm, eri)
 
             if self.xc:
                 self.xc.ao_eval = ao_eval
@@ -166,6 +189,11 @@ class SCF(torch.nn.Module):
                 self.xc.grid_coords = grid_coords
                 self.xc.edge_index = edge_index
                 self.xc.ml_ovlp = ml_ovlp
+                if vh_on_grid is not None:
+                    self.xc.vh_on_grid = vh_on_grid
+                    self.xc.df_2c_inv = df_2c_inv
+                    self.xc.df_3c = df_3c
+                    
                 exc = self.xc(dm)
 
                 
