@@ -182,7 +182,7 @@ def gen_atomic_grids(mol, atom_grid={}, radi_method=radi.gauss_chebyshev,
             atom_grids_tab[symb] = coords, weights
     return atom_grids_tab
 
-def half_circle(mf, mol, level, n_ang = 25):
+def half_circle(mf, mol, level, n_ang = 25, sample=1):
 
     atom_grids_tab = gen_atomic_grids(mol,level=level,nang=n_ang)
 
@@ -201,6 +201,12 @@ def half_circle(mf, mol, level, n_ang = 25):
     coords = pruned.coords
     weights = pruned.weights
     
+    if not sample == 1:
+        samp = np.arange(len(coords))
+        np.random.shuffle(samp)
+        n_samp = int(sample * len(coords))
+        coords = coords[samp[:n_samp]]
+        weights = weights[samp[:n_samp]]
     return coords, weights
 
 def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
