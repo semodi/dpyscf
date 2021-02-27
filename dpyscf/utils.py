@@ -210,8 +210,8 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
 
     print(atoms)
     print(basis)
-    if not atoms.info.get('sc', True):
-        xc = 'PBE0'
+#     if not atoms.info.get('sc', True):
+#         xc = 'PBE0'
         
     if not ref_basis:
         ref_basis = basis
@@ -233,17 +233,19 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
     pos = atoms.positions
     spec = atoms.get_chemical_symbols()
     mol_input = [[s, p] for s, p in zip(spec, pos)]
+    charge = atoms.info.get('charge', 0 )
     try:
-        mol = gto.M(atom=mol_input, basis=basis,spin=spin)
+        mol = gto.M(atom=mol_input, basis=basis, spin=spin,charge = charge)
     except:
         spin = 1
-        mol = gto.M(atom=mol_input, basis=basis,spin=spin)
+        mol = gto.M(atom=mol_input, basis=basis, spin=spin, charge = charge)
 
-    mol_ref = gto.M(atom=mol_input, basis=ref_basis, spin=spin)   
+    mol_ref = gto.M(atom=mol_input, basis=ref_basis, spin=spin, charge = charge)   
     if ml_basis:
         auxmol = gto.M(atom=mol_input,spin=spin, basis=gto.parse(open(ml_basis,'r').read()))
         ml_ovlp = get_mlovlp(mol,auxmol)
         features.update({'ml_ovlp':ml_ovlp})
+        
     s = mol.intor('int1e_ovlp')
     t = mol.intor('int1e_kin')
     v = mol.intor('int1e_nuc')
@@ -302,7 +304,7 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         matrices['dm_realinit'] = dm_realinit
 
     if ref_path:
-        if atoms.info.get('sc', True):
+        if atoms.info.get('sc', True) and not atoms.info.get('reaction', False):
             print('Loading reference density')
             dm_base = np.load(ref_path+ '/{}.dm.npy'.format(ref_index))
             

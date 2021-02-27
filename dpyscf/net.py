@@ -17,7 +17,7 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=F
         lob = 1.804 if ueg_limit else 0
         if polynomial:
             x = XC_L_POL(device=DEVICE, max_order=3, use=[1], lob=lob, ueg_limit=ueg_limit)
-            c = C_L_POL(device=DEVICE, max_order=8,  use=[0, 1, 2, 3], ueg_limit=ueg_limit and not freec)
+            c = C_L_POL(device=DEVICE, max_order=4,  use=[0, 1, 2, 3], ueg_limit=ueg_limit and not freec)
         else:
             x = XC_L(device=DEVICE,n_input=1, n_hidden=16, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
             c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit and not freec)
@@ -144,7 +144,7 @@ class XC(torch.nn.Module):
         self.model_mult = [1 for m in self.grid_models]
         if exx_a is not None:
             self.exx_a = torch.nn.Parameter(torch.Tensor([exx_a]))
-            self.exx_a.requires_grad = False
+            self.exx_a.requires_grad = True
 #             self.exx_a = exx_a
         else:
 #             self.register_buffer('exx_a', torch.Tensor([0]))
@@ -165,7 +165,7 @@ class XC(torch.nn.Module):
 
     def add_exx_a(self, exx_a):
         self.exx_a = torch.nn.Parameter(torch.Tensor([exx_a]))
-        self.exx_a.requires_grad = False
+        self.exx_a.requires_grad = True
 #         self.exx_a = exx_a
 
     def get_descriptors_pol(self, rho0_a, rho0_b, gamma_a, gamma_b, gamma_ab, tau_a, tau_b, spin_scaling = False):
