@@ -364,7 +364,7 @@ class XC(torch.nn.Module):
                 gamma_a=gamma_b=gamma_ab= contract('ij,ij->j',drho[:],drho[:])*0.25
                 tau_a = tau_b = tau*0.5
                 non_loc_a=non_loc_b = non_loc*0.5
-
+            
             exc = self.eval_grid_models(torch.cat([rho0_a.unsqueeze(-1),
                                                     rho0_b.unsqueeze(-1),
                                                     gamma_a.unsqueeze(-1),
@@ -397,7 +397,7 @@ class XC(torch.nn.Module):
         tau_a = rho[:, 7]
         tau_b = rho[:, 8]
         lapl = rho[:,9:]
-        nl_size = int(lapl.size()[-1]/2)
+        nl_size = lapl.size()[-1]//2
         lapl_a = lapl[:,:nl_size]
         lapl_b = lapl[:,nl_size:]
 

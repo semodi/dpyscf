@@ -10,8 +10,11 @@ import json
 DEVICE='cpu'
 torch.set_default_dtype(torch.double)
 config = json.loads(open(sys.argv[2],'r').read())
-
-xc = get_scf(config['type'], config['pretrain_loc'], config['hyb_par'], path = sys.argv[1],
+if sys.argv[1] == '0':
+    path = None
+else:
+    path = sys.argv[1]
+xc = get_scf(config['type'], config['pretrain_loc'], config['hyb_par'], path = path,
              polynomial=config.get('polynomial',False),
              ueg_limit = not config.get('free',False)).xc
 
