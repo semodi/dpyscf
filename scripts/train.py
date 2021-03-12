@@ -53,6 +53,10 @@ parser.add_argument('--start_converged', action='store_true', help='Start from c
 parser.add_argument('--scf_steps', metavar='scf_steps', type=int, default=25, help='Number of scf steps')
 parser.add_argument('--polynomial', action='store_true', help='Use polynomials instead of neural networks')
 parser.add_argument('--free', action='store_true', help='No LOB and UEG limit')
+parser.add_argument('--freec', action='store_true', help='No LOB and UEG limit for correlation')
+parser.add_argument('--meta_x', metavar='meta_x',type=float, default=None, help='')
+parser.add_argument('--rho_alt', action='store_true', help='Alternative rho loss on total density')
+parser.add_argument('--radical_factor', metavar='radical_factor',type=float, default=1.0, help='')
 args = parser.parse_args()
 
 ueg_limit = not args.free
@@ -67,15 +71,21 @@ def get_scf(path=args.modelpath):
         lob = 1.804 if ueg_limit else 0 
         if args.polynomial:
             x = XC_L_POL(device=DEVICE, max_order=3, use=[1], lob=lob, ueg_limit=ueg_limit)
-            c = C_L_POL(device=DEVICE, max_order=8,  use=[0, 1, 2, 3], ueg_limit=ueg_limit)
+#             c = C_L_POL(device=DEVICE, max_order=4,  use=[0, 1, 2, 3], ueg_limit=ueg_limit and not args.freec)
+            c = C_L_POL(device=DEVICE, max_order=4,  use=[0, 1, 2, 3], ueg_limit=ueg_limit and not args.freec)
         else:
             x = XC_L(device=DEVICE,n_input=1, n_hidden=16, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
-            c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit)
+            c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit and not args.freec)
         
         xc_level = 2
     elif args.type == 'MGGA':
-        x = XC_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=1.174, ueg_limit=ueg_limit) # PBE_X
-        c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit)
+        lob = 1.174 if ueg_limit else 0 
+        if args.polynomial:
+            x = XC_L_POL(device=DEVICE, max_order=4, use=[1, 2], lob=0, ueg_limit=ueg_limit, sdecay=True)
+            c = C_L_POL(device=DEVICE, max_order=3,  use=[0, 1, 2, 3, 4, 5], ueg_limit=ueg_limit)
+        else:    
+            x = XC_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=lob, ueg_limit=ueg_limit) # PBE_X
+            c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit and not args.freec)
         xc_level = 3
     print("Loading pre-trained models from " + args.pretrain_loc)
     x.load_state_dict(torch.load(args.pretrain_loc + '/x'))
@@ -106,7 +116,7 @@ def get_scf(path=args.modelpath):
             xc.exx_a.requires_grad=True
 
     else:
-        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, polynomial = args.polynomial)
+        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, polynomial = args.polynomial, meta_x = args.meta_x)
         scf = SCF(nsteps=args.scf_steps, xc=xc, exx=False,alpha=0.3)
         if path:
             xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
@@ -115,6 +125,7 @@ def get_scf(path=args.modelpath):
     return scf
 
 if __name__ == '__main__':
+
     if HYBRID:
         logpath = args.logpath + str(datetime.now()).replace(' ','_')
     else:
@@ -141,22 +152,40 @@ if __name__ == '__main__':
         tar.add(source_dir, arcname=os.path.basename(source_dir))
 
 #     atoms = read(dpyscf_dir + '/data/haunschild_training.traj',':')
-    atoms = read(dpyscf_dir + '/data/haunschild_scan_extended.traj',':')
+#     atoms = read(dpyscf_dir + '/data/haunschild_scan_extended.traj',':')
+    atoms = read(dpyscf_dir + '/data/haunshild_pbe_reaction.traj',':')
 #     atoms = read(dpyscf_dir + '/data/haunschild_pbe.traj',':')
     # atoms = read(dpyscf_dir + '/data/haunschild_test.traj',':')
     indices = np.arange(len(atoms)).tolist()
 
-    if args.type == 'GGA':
+    pop = [34, 33, 32, 10, 7, 5]
+#     if args.type == 'GGA':
+# #         pop = [12, 8, 7,  5, 4]
 #         pop = [12, 8, 7,  5, 4]
-        pop = [12, 8, 7,  5, 4]
-        if HYBRID:
-#              pop = [29, 28, 27, 26, 25, 24, 23, 22, 21, 12, 7,  5, 2] # (Hybrid GGA)
-            pop = [21, 12, 7,  5, 2] # (Hybrid GGA)
-    else:
-#         pop = [21, 12, 11, 10, 8, 7, 5, 4, 3, 0] # (Meta-GGA)
-        pop = [12, 10, 7, 5] # (Meta-GGA)
-#         pop = [ 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 1, 0] # (Meta-GGA)
-    # pop = []
+#         pop = []
+#         if args.meta_x:
+#             pop = [21] + pop
+#         if HYBRID:
+# #              pop = [29, 28, 27, 26, 25, 24, 23, 22, 21, 12, 7,  5, 2] # (Hybrid GGA)
+#             pop = [21, 12, 7,  5, 2] # (Hybrid GGA)
+#             pop = [7]
+#     else:
+# #         pop = [21, 12, 11, 10, 8, 7, 5, 4, 3, 0] # (Meta-GGA)
+#         pop = [12, 10, 7, 5] # (Meta-GGA)
+#         pop = [7]
+#         if HYBRID:
+#             pop = pop + [0]
+# #         pop = [ 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 1, 0] # (Meta-GGA)
+#     # pop = []
+
+#     pop = np.arange(len(atoms)).tolist()
+#     pop.pop(-1)
+#     pop.pop(-1)
+#     pop.pop(20)
+#     pop.pop(16)
+#     pop.pop(13)
+#     pop = pop[::-1]
+    
     [atoms.pop(i) for i in pop]
     [indices.pop(i) for i in pop]
 
@@ -171,8 +200,8 @@ if __name__ == '__main__':
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False) # Dont change batch size !
     dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size=1, shuffle=False) # Dont change batch size !
 
-    molecules = {'{:3d}'.format(idx) + ''.join(a.get_chemical_symbols()): [idx] for idx, a in enumerate(atoms) if len(a.positions) > 1 }
-    pure_atoms = {''.join(a.get_chemical_symbols()): [idx] for idx, a in enumerate(atoms) if len(a.positions) == 1 }
+    molecules = {'{:3d}'.format(idx) + ''.join(a.get_chemical_symbols()): [idx] for idx, a in enumerate(atoms) if len(a.positions) > 1 and not a.info.get('reaction') }
+    pure_atoms = {''.join(a.get_chemical_symbols()): [idx] for idx, a in enumerate(atoms) if len(a.positions) == 1 and not a.info.get('reaction')}
 
     def split(el):
             import re
@@ -187,11 +216,20 @@ if __name__ == '__main__':
 
     a_count = {a: np.sum([a in molecules[mol] for mol in molecules]) for a in np.unique([m  for mol in molecules for m in molecules[mol]])}
 
+    reactions = {}
+    for idx, a in enumerate(atoms):
+        if not a.info.get('reaction'): continue
+        if a.info.get('reaction') == 'reactant': continue
+        reactions['{:3d}'.format(idx) + ''.join(a.get_chemical_symbols())] = \
+            [idx] + [idx + i for i in np.arange(-a.info.get('reaction'),0,1).astype(int)]
+    print(reactions)
+    molecules.update(reactions)
+    
 
     best_loss = 1e6
 
     scf = get_scf(args.modelpath)
-    
+  
     if args.testrun:
         print("\n ======= Starting testrun ====== \n\n")
         scf.xc.evaluate()
@@ -225,17 +263,17 @@ if __name__ == '__main__':
         print(str(np.array(Es)[:,-1]-np.array(Es)[:,-2]), 'Convergence')
 
     print("\n ======= Starting training ====== \n\n")
-
+#     assert False
     scf.xc.train()
     PRINT_EVERY=1
     skip_steps = max(5, args.scf_steps - 10)
 
     def get_optimizer(model, path=''):
         if HYBRID:
-            optimizer = torch.optim.Adam(list(model.parameters()) + [model.xc.exx_a],
-                                      lr=args.lr, weight_decay=args.l2)
-#             optimizer = torch.optim.Adam(list(model.parameters()),
+#             optimizer = torch.optim.Adam(list(model.parameters()) + [model.xc.exx_a],
 #                                       lr=args.lr, weight_decay=args.l2)
+            optimizer = torch.optim.Adam(list(model.parameters()),
+                                      lr=args.lr, weight_decay=args.l2)
         else:
             optimizer = torch.optim.Adam(model.parameters(),
                                       lr=args.lr, weight_decay=args.l2)
@@ -252,18 +290,30 @@ if __name__ == '__main__':
     optimizer, scheduler = get_optimizer(scf)
 
     AE_mult = 1
-
-    mol_losses = {"rho" : (partial(rho_loss,loss = torch.nn.MSELoss()), RHO_mult)}
+    density_loss = rho_alt_loss if args.rho_alt else rho_loss
+    mol_losses = {"rho" : (partial(density_loss, loss = torch.nn.MSELoss()), RHO_mult)}
     atm_losses = {"E":  (partial(energy_loss, loss = torch.nn.MSELoss()), E_mult)}
-#     atm_losses = {}
-    h_losses = {"rho" : (partial(rho_loss,loss = torch.nn.MSELoss()), RHO_mult),
+    h_losses = {"rho" : (partial(density_loss,loss = torch.nn.MSELoss()), RHO_mult),
                 "E":  (partial(energy_loss, loss = torch.nn.MSELoss()), E_mult)}
 #     h_losses = {}
 
     ae_loss = partial(ae_loss,loss = torch.nn.MSELoss())
-
+     
+  
+    train_order = np.arange(len(molecules)).astype(int)
+    molecules_sc = {}
+    for m_idx in train_order:
+        molecule = list(molecules.keys())[m_idx]
+        mol_sc = True
+        for idx in range(len(dataloader_train)):
+            if not idx in molecules[molecule]: continue
+            mol_sc = atoms[idx].info.get('sc',True)
+        molecules_sc[molecule] = mol_sc
+        
+            
     chkpt_idx = 0
     validate_every = 10
+
     for epoch in range(100000):
 
 
@@ -282,6 +332,7 @@ if __name__ == '__main__':
                 np.random.shuffle(train_order)
                 for m_idx in train_order:
                     molecule = list(molecules.keys())[m_idx]
+                    if not molecules_sc[molecule] and not nonSC_mult: continue
                     mol_sc = True
 #                 for molecule in molecules:
                     ref_dict = {}
@@ -307,7 +358,7 @@ if __name__ == '__main__':
                         else:
                             dm_in = dm_init
                             mol_sc = False
-                        
+                        reaction = atoms[idx].info.get('reaction',False)
                         results = scf(dm_in, matrices, sc)
                         results['dm_ref'] = dm_ref
                         results['fcenter'] = matrices.get('fcenter',None)
@@ -319,17 +370,36 @@ if __name__ == '__main__':
                         results['n_elec'] = matrices['n_elec']
                         results['e_ip_ref'] = matrices['e_ip']
                         results['mo_occ'] = matrices['mo_occ']
+                        if atoms[idx].info.get('radical', False):
+                            results['rho'] *= args.radical_factor
+                            results['dm'] *= args.radical_factor
                         if len(atoms[idx].positions) > 1 and sc:
                             losses = mol_losses
-                        elif str(atoms[idx].symbols) in ['H', 'Li'] and args.hnorm:
+                        elif str(atoms[idx].symbols) in ['H', 'Li'] and args.hnorm and not reaction:
                             losses = h_losses
-                            results['E_ref'] = -0.5
-                        elif sc:
+                        elif sc and not reaction:
                             losses = atm_losses
+                        else:
+                            losses = {}
                         losses_eval = {key: losses[key][0](results)/a_count[idx] for key in losses}
-                        running_losses.update({key:running_losses[key] +                               losses_eval[key].item() for key in losses})
+                        running_losses.update({key:running_losses[key] + losses_eval[key].item() for key in losses})
                         
-                        if len(atoms[idx].positions) > 1:
+                        if reaction == 2:
+                            ref_dict['AB'] = e_ref
+                            pred_dict['AB'] = results['E'][-1:]
+                        elif reaction == 1:
+                            ref_dict['AA'] = e_ref*2
+                            pred_dict['AA'] = results['E'][skip_steps:]*2
+                        elif reaction == 'reactant':
+                            if sc:
+                                ref_dict['A'] = e_ref
+                                pred_dict['A'] = results['E'][skip_steps:]
+                            else:
+                                label = 'A' if not 'A' in ref_dict else 'B'
+                                ref_dict[label] = e_ref
+                                pred_dict[label] = results['E'][-1:]
+                                
+                        elif len(atoms[idx].positions) > 1:
                             ref_dict[''.join(atoms[idx].get_chemical_symbols())] = e_ref
                             if sc:
                                 steps = skip_steps

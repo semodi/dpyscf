@@ -16,7 +16,9 @@ else:
     path = sys.argv[1]
 xc = get_scf(config['type'], config['pretrain_loc'], config['hyb_par'], path = path,
              polynomial=config.get('polynomial',False),
-             ueg_limit = not config.get('free',False)).xc
+             ueg_limit = not config.get('free',False), 
+             meta_x = config.get('meta_x',None),
+             freec = config.get('freec',False)).xc
 
 if len(sys.argv) > 4:
     print('Only using grid model {:d}'.format(int(sys.argv[4])))

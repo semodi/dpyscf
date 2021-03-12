@@ -38,7 +38,7 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=F
         x = XC_L(device=DEVICE,n_input=3, n_hidden=16, use=[1,2,3], lob=1.174, ueg_limit=ueg_limit) # PBE_X
         c = C_L(device=DEVICE,n_input=5, n_hidden=16, use=[2,3,4], ueg_limit=ueg_limit and not freec)
         xc_level = 4
-        
+
     if pretrain_loc is not None:
         print("Loading pre-trained models from " + pretrain_loc)
         x.load_state_dict(torch.load(pretrain_loc + '/x'))
@@ -151,7 +151,7 @@ class XC(torch.nn.Module):
 #             self.register_buffer('model_mult',torch.Tensor(model_mult))
 #         else:
         self.model_mult = [1 for m in self.grid_models]
-        
+
         if exx_a is not None:
             self.exx_a = torch.nn.Parameter(torch.Tensor([exx_a]))
             self.exx_a.requires_grad = True
@@ -165,7 +165,7 @@ class XC(torch.nn.Module):
             self.meta_x = 0
         if omega is not None:
             self.nl_ueg = torch.Tensor([omega_const.get(o,3*(3/np.pi)**(1/3)) for o in omega]).unsqueeze(0)
-            
+
     def evaluate(self):
         self.training=False
     def train(self):
@@ -193,7 +193,7 @@ class XC(torch.nn.Module):
             return torch.sqrt(gamma)/(2*(3*np.pi**2)**(1/3)*rho**(4/3)+self.epsilon)
 
         def l_3(rho, gamma, tau):
-            return (tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon)
+            return torch.nn.functional.relu((tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon))
             # return (uniform_factor*rho**(5/3))/(tau+self.epsilon)
 
         if not spin_scaling:
@@ -243,7 +243,7 @@ class XC(torch.nn.Module):
                 descr4 = descr4**3/(descr4**2+self.epsilon)
 #             descr4 = torch.log((descr4 + 1)/2)
             descr = torch.cat([descr, descr4],dim=-1)
- 
+
         if spin_scaling:
             descr = descr.view(descr.size()[0],-1,2).permute(2,0,1)
 
@@ -261,12 +261,12 @@ class XC(torch.nn.Module):
             return torch.sqrt(gamma)/(2*(3*np.pi**2)**(1/3)*rho**(4/3)+self.epsilon)
 
         def l_3(rho, gamma, tau):
-            return (tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon)
-        
+            return torch.nn.functionals.relu((tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon))
+
         def l_4(rho, nl):
             return nl/((rho.unsqueeze(-1)**(1/3))*self.nl_ueg + self.epsilon)
-        
-        
+
+
         if not spin_scaling:
             zeta = (rho0_a - rho0_b)/(rho0_a + rho0_b + self.epsilon)
             spinscale = 0.5*((1+zeta)**(4/3) + (1-zeta)**(4/3)) # zeta
@@ -345,12 +345,12 @@ class XC(torch.nn.Module):
             rho0 = rho[0,0]
             drho = rho[0,1:4] + rho[1:4,0]
             tau = 0.5*(rho[1,1] + rho[2,2] + rho[3,3])
-            
+
             if self.level > 3:
                 non_loc = contract('mnQ, QP, Pki, ...mn-> ...ki', self.df_3c, self.df_2c_inv, self.vh_on_grid, dm)
             else:
                 non_loc = torch.zeros_like(tau)
-               
+
             if dm.dim() == 3:
                 rho0_a = rho0[0]
                 rho0_b = rho0[1]
@@ -364,7 +364,7 @@ class XC(torch.nn.Module):
                 gamma_a=gamma_b=gamma_ab= contract('ij,ij->j',drho[:],drho[:])*0.25
                 tau_a = tau_b = tau*0.5
                 non_loc_a=non_loc_b = non_loc*0.5
-            
+
             exc = self.eval_grid_models(torch.cat([rho0_a.unsqueeze(-1),
                                                     rho0_b.unsqueeze(-1),
                                                     gamma_a.unsqueeze(-1),
@@ -551,8 +551,8 @@ class C_L(torch.nn.Module):
             if len(self.use) > 2:
                 ueg_lim_nl = torch.sum(rho[...,self.use[2:]],dim=-1)
             else:
-                ueg_lim_nl = 0 
-                
+                ueg_lim_nl = 0
+
             return -self.lobf(-squeezed*(ueg_lim + ueg_lim_a + ueg_lim_nl))
 
         else:
@@ -715,7 +715,7 @@ class XC_L(torch.nn.Module):
         self.one_e = one_e
         self.one_e_decay = torch.nn.Parameter(torch.Tensor([0.01]))
         self.one_e_decay.requires_grad_ = True
-        
+
     def forward(self, rho, **kwargs):
         squeezed = self.net(rho[...,self.use]).squeeze()
         if self.ueg_limit:
@@ -740,9 +740,9 @@ class XC_L(torch.nn.Module):
             alpha=rho[...,self.use[1]]
             u = rho[...,self.use[2]]
             result = (alpha - np.log(1/2))*result + torch.exp(-self.one_e_decay*(alpha - np.log(1/2)))*(torch.exp(u)-1)
-        
+
         return result
-    
+
 class LOB(torch.nn.Module):
 
     def __init__(self, limit=1.804):
