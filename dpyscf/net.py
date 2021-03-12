@@ -180,7 +180,7 @@ class XC(torch.nn.Module):
             return torch.sqrt(gamma)/(2*(3*np.pi**2)**(1/3)*rho**(4/3)+self.epsilon)
 
         def l_3(rho, gamma, tau):
-            return (tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon)
+            return torch.nn.functional.relu((tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon))
             # return (uniform_factor*rho**(5/3))/(tau+self.epsilon)
 
         if not spin_scaling:
@@ -247,7 +247,7 @@ class XC(torch.nn.Module):
             return torch.sqrt(gamma)/(2*(3*np.pi**2)**(1/3)*rho**(4/3)+self.epsilon)
 
         def l_3(rho, gamma, tau):
-            return (tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon)
+            return torch.nn.functional.relu((tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon))
 
         if not spin_scaling:
             zeta = (rho0_a - rho0_b)/(rho0_a + rho0_b + self.epsilon)

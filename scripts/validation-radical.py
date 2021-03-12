@@ -19,11 +19,11 @@ basis = '6-311++G(3df,2pd)'
 
 
 # systems = [113, 25, 18, 114, 0] #Training
-systems = [103, 14, 23, 5, 10, 79, 27, 105] #Validation
-# systems += [23, 84, 144, 21, 116, 106, 15, 58] #Expanded training
+systems = [107, 108] #Validation
+
 # systems = [5] #Validation
 # systems = [103, 14]
-bh_systems = [0, 65]
+# bh_systems = [1, 23, 60]
 # bh_systems = [1]
 #bh_systems = [1]
 # systems = [50]
@@ -54,7 +54,7 @@ dm_refs += [None for a in np.unique([s for a in atoms for s in a.get_chemical_sy
 atoms += [Atoms(a, info={'spin':spins[a]}) for a in np.unique([s for a in atoms for s in a.get_chemical_symbols() ])]
 
 
-def run_validate(nxc='MGGA_tmp', xc_type='nxc', do_bh=False):
+def run_validate(nxc='MGGA_tmp', xc_type='nxc'):
 
     from_listener = False
     if not isinstance(nxc,str):
@@ -126,10 +126,12 @@ def run_validate(nxc='MGGA_tmp', xc_type='nxc', do_bh=False):
             mf = method(mol)
             mf.xc = nxc
 
-        mf.grids.level=5
+        mf.grids.level=9
+       
         mf.kernel()
         dm_predicted = mf.make_rdm1()
         pred_dict[''.join(a.get_chemical_symbols())] = mf.e_tot
+
         if len(pos) > 1:
             if dm_ref.ndim == 2:
                 dm_ref = np.stack([dm_ref,dm_ref],axis=0)*.5
@@ -149,19 +151,14 @@ def run_validate(nxc='MGGA_tmp', xc_type='nxc', do_bh=False):
     
     dm_loss = np.mean(dm_loss)
     ae_loss = np.mean(np.abs(pred - e_ref))
-    if do_bh:
-        
-        barrier_heights, reference_heights = test_bh(nxc, nxc='nxc', indices=bh_systems, ref_dir='./')
-        bh_loss = np.mean(np.abs(np.array(barrier_heights)-np.array(reference_heights)))*kcalpmol/Hartree
-        ae_loss = (ae_loss*len(pred) + bh_loss*len(barrier_heights))/(len(pred)+len(barrier_heights))
-        
+
     return ae_loss, dm_loss
 
 if __name__ == '__main__':
     ae_loss, dm_loss = run_validate(*sys.argv[1:])
-    barrier_heights, reference_heights = test_bh(*sys.argv[1:], indices=bh_systems)
-    bh_loss = np.mean(np.abs(np.array(barrier_heights)-np.array(reference_heights)))
+#     barrier_heights, reference_heights = test_bh(*sys.argv[1:], indices=bh_systems)
+#     bh_loss = np.mean(np.abs(np.array(barrier_heights)-np.array(reference_heights)))
 #     print(barrier_heights)
 #     print(reference_heights)
-    print(ae_loss*Hartree/kcalpmol, dm_loss, bh_loss)
-#    print(ae_loss*Hartree/kcalpmol, dm_loss)
+#     print(ae_loss*Hartree/kcalpmol, dm_loss, bh_loss)
+    print(ae_loss*Hartree/kcalpmol, dm_loss)

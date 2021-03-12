@@ -55,7 +55,7 @@ if __name__ == '__main__':
         
         scf = torch.load(path)
 
-        ae_error, rho_error = run_validate(scf.xc)
+        ae_error, rho_error = run_validate(scf.xc, do_bh=True)
         error = ae_error + np.sqrt(RHO_mult) * rho_error
         best_error = min(best_error, error)
 

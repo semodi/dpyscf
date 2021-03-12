@@ -61,7 +61,7 @@ for a_idx, a in enumerate(atoms):
         
     mf = dft.UKS(mol)
     mf.xc = 'PBE'
-    mf.grids.level = 7
+    mf.grids.level = 9
     mf.grids.build()
 
     dm = dms_pred[a_idx]
