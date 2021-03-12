@@ -1,4 +1,5 @@
 import torch
+torch.set_default_dtype(torch.double)
 from torch.nn import Sequential as Seq, Linear, ReLU,Sigmoid,GELU
 # from torch_geometric.nn import MessagePassing
 import pyscf
@@ -84,8 +85,8 @@ epsilon=0
 class Reduce(torch.nn.Module):
     def __init__(self,mean, std, device='cpu'):
         super().__init__()
-        self.mean = torch.Tensor([mean],).double().to(device)
-        self.std = torch.Tensor([std]).double().to(device)
+        self.mean = torch.Tensor([mean],).to(device)
+        self.std = torch.Tensor([std]).to(device)
     def forward(self, input):
         return torch.sum(input)*self.std[0] + self.mean[0]
 
@@ -261,7 +262,7 @@ class XC(torch.nn.Module):
             return torch.sqrt(gamma)/(2*(3*np.pi**2)**(1/3)*rho**(4/3)+self.epsilon)
 
         def l_3(rho, gamma, tau):
-            return torch.nn.functionals.relu((tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon))
+            return torch.nn.functional.relu((tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon))
 
         def l_4(rho, nl):
             return nl/((rho.unsqueeze(-1)**(1/3))*self.nl_ueg + self.epsilon)
@@ -349,7 +350,7 @@ class XC(torch.nn.Module):
             if self.level > 3:
                 non_loc = contract('mnQ, QP, Pki, ...mn-> ...ki', self.df_3c, self.df_2c_inv, self.vh_on_grid, dm)
             else:
-                non_loc = torch.zeros_like(tau)
+                non_loc = torch.zeros_like(tau).unsqueeze(-1)
 
             if dm.dim() == 3:
                 rho0_a = rho0[0]
@@ -507,7 +508,7 @@ class NXC(torch.nn.Module):
                             torch.nn.GELU(),
                             torch.nn.Linear(n_hidden, 1),
                             Reduce(e_mean, e_std, device)
-                        ).double().to(device)
+                        ).to(device)
 
     def forward(self, dm, ml_ovlp):
         coeff = contract('ij,ijlk->lk', dm, ml_ovlp)
@@ -533,7 +534,7 @@ class C_L(torch.nn.Module):
                 torch.nn.GELU(),
                 torch.nn.Linear(n_hidden, 1),
                 torch.nn.Softplus()
-            ).double().to(device)
+            ).to(device)
         self.sig = torch.nn.Sigmoid()
         self.tanh = torch.nn.Tanh()
         self.lobf = LOB(2.0)
@@ -548,7 +549,7 @@ class C_L(torch.nn.Module):
                 ueg_lim_a = torch.pow(self.tanh(rho[...,self.use[1]]),2)
             else:
                 ueg_lim_a = 0
-            if len(self.use) > 2:
+            if len(self.use) > 3:
                 ueg_lim_nl = torch.sum(rho[...,self.use[2:]],dim=-1)
             else:
                 ueg_lim_nl = 0
@@ -706,15 +707,15 @@ class XC_L(torch.nn.Module):
                 torch.nn.Linear(n_hidden, n_hidden),
                 torch.nn.GELU(),
                 torch.nn.Linear(n_hidden, 1),
-            ).double().to(device)
+            ).to(device)
 
         self.tanh = torch.nn.Tanh()
         self.sig = torch.nn.Sigmoid()
         self.lobf = LOB(lob)
         self.shift = 1/(1+np.exp(-1e-3))
         self.one_e = one_e
-        self.one_e_decay = torch.nn.Parameter(torch.Tensor([0.01]))
-        self.one_e_decay.requires_grad_ = True
+#         self.one_e_decay = torch.nn.Parameter(torch.Tensor([0.01]))
+#         self.one_e_decay.requires_grad_ = True
 
     def forward(self, rho, **kwargs):
         squeezed = self.net(rho[...,self.use]).squeeze()
@@ -727,6 +728,8 @@ class XC_L(torch.nn.Module):
                 ueg_lim_a = 0
             if len(self.use) > 2:
                 ueg_lim_nl = torch.sum(rho[...,self.use[2:]],dim=-1)
+            else:
+                ueg_lim_nl = 0
         else:
             ueg_lim = 1
             ueg_lim_a = 0
@@ -739,7 +742,8 @@ class XC_L(torch.nn.Module):
         if self.one_e:
             alpha=rho[...,self.use[1]]
             u = rho[...,self.use[2]]
-            result = (alpha - np.log(1/2))*result + torch.exp(-self.one_e_decay*(alpha - np.log(1/2)))*(torch.exp(u)-1)
+#             result = (alpha - np.log(1/2))*result + torch.exp(-self.one_e_decay*(alpha - np.log(1/2)))*(torch.exp(u)-1)
+            result = (alpha - np.log(1/2))*result + torch.exp(-0.01*(alpha - np.log(1/2)))*(torch.exp(u)-1)
 
         return result
 

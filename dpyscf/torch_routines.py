@@ -140,11 +140,12 @@ class SCF(torch.nn.Module):
         dm = dm[0]
 
         # Required matrices
-        v, t, eri, mo_occ, s_oh, s_inv_oh,  e_nuc, s = [matrices[key][0] for key in \
-                                             ['v','t','eri','mo_occ','s_oh','s_inv_oh',
+        v, t, mo_occ, s_oh, s_inv_oh,  e_nuc, s = [matrices[key][0] for key in \
+                                             ['v','t','mo_occ','s_oh','s_inv_oh',
                                              'e_nuc','s']]
 
         # Optional matrices
+        eri = matrices.get('eri',[None])[0]
         ml_ovlp = matrices.get('ml_ovlp',[None])[0]
         grid_weights = matrices.get('grid_weights',[None])[0]
         grid_coords = matrices.get('grid_coords',[None])[0]

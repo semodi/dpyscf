@@ -31,7 +31,7 @@ def get_mlovlp(mol, auxmol):
 
 class Dataset(object):
     def __init__(self, **kwargs):
-        needed = ['dm_init','v','t','s','eri','n_elec','e_nuc','Etot','dm']
+        needed = ['dm_init','v','t','s','n_elec','e_nuc','Etot','dm']
         for n in needed:
             assert n in kwargs
 
@@ -269,14 +269,15 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
     s = mol.intor('int1e_ovlp')
     t = mol.intor('int1e_kin')
     v = mol.intor('int1e_nuc')
-    eri = mol.intor('int2e')
+    
     if dfit:
         auxbasis = df.addons.make_auxbasis(mol,mp2fit=False)
         auxmol = df.addons.make_auxmol(mol, auxbasis)
         df_3c = df.incore.aux_e2(mol, auxmol, 'int3c2e', aosym='s1', comp=1)
         df_2c = auxmol.intor('int2c2e', aosym='s1', comp=1)
         df_2c_inv = scipy.linalg.pinv(df_2c)
-    
+    else:
+        eri = mol.intor('int2e')
   
         
     if do_fcenter:
@@ -318,7 +319,6 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
                 'v':v,
                 't':t,
                 's':s,
-                'eri':eri,
                 'n_elec':n_elec,
                 'n_atoms':n_atoms,
                 'e_nuc': np.array(mf.energy_nuc()),
@@ -331,7 +331,8 @@ def get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
     if dfit:
         matrices.update({'df_2c_inv':df_2c_inv,
                          'df_3c': df_3c})
-
+    else:
+        matrices.update({'eri':eri})
         
     if not init_guess:
         matrices['dm_realinit'] = dm_realinit

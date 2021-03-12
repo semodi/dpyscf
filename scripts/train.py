@@ -68,7 +68,7 @@ HYBRID = (args.hyb_par > 0.0)
 def get_scf(path=args.modelpath):
 
     if args.type == 'GGA':
-        lob = 1.804 if ueg_limit else 0 
+        lob = 1.804 if ueg_limit else 0
         if args.polynomial:
             x = XC_L_POL(device=DEVICE, max_order=3, use=[1], lob=lob, ueg_limit=ueg_limit)
 #             c = C_L_POL(device=DEVICE, max_order=4,  use=[0, 1, 2, 3], ueg_limit=ueg_limit and not args.freec)
@@ -76,14 +76,14 @@ def get_scf(path=args.modelpath):
         else:
             x = XC_L(device=DEVICE,n_input=1, n_hidden=16, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
             c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit and not args.freec)
-        
+
         xc_level = 2
     elif args.type == 'MGGA':
-        lob = 1.174 if ueg_limit else 0 
+        lob = 1.174 if ueg_limit else 0
         if args.polynomial:
             x = XC_L_POL(device=DEVICE, max_order=4, use=[1, 2], lob=0, ueg_limit=ueg_limit, sdecay=True)
             c = C_L_POL(device=DEVICE, max_order=3,  use=[0, 1, 2, 3, 4, 5], ueg_limit=ueg_limit)
-        else:    
+        else:
             x = XC_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=lob, ueg_limit=ueg_limit) # PBE_X
             c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit and not args.freec)
         xc_level = 3
@@ -185,7 +185,7 @@ if __name__ == '__main__':
 #     pop.pop(16)
 #     pop.pop(13)
 #     pop = pop[::-1]
-    
+
     [atoms.pop(i) for i in pop]
     [indices.pop(i) for i in pop]
 
@@ -224,12 +224,12 @@ if __name__ == '__main__':
             [idx] + [idx + i for i in np.arange(-a.info.get('reaction'),0,1).astype(int)]
     print(reactions)
     molecules.update(reactions)
-    
+
 
     best_loss = 1e6
 
     scf = get_scf(args.modelpath)
-  
+
     if args.testrun:
         print("\n ======= Starting testrun ====== \n\n")
         scf.xc.evaluate()
@@ -241,13 +241,13 @@ if __name__ == '__main__':
             print(atoms[cnt])
             sc = atoms[cnt].info.get('sc',True)
             cnt += 1
-            if not sc: continue 
+            if not sc: continue
             dm_init = dm_init.to(DEVICE)
             e_ref = e_ref.to(DEVICE)
             dm_ref = dm_ref.to(DEVICE)
             matrices = {key:matrices[key].to(DEVICE) for key in matrices}
             E_pretrained.append(matrices['e_pretrained'])
-     
+
             results = scf.forward(matrices['dm_realinit'], matrices, sc)
             E = results['E']
 
@@ -298,8 +298,8 @@ if __name__ == '__main__':
 #     h_losses = {}
 
     ae_loss = partial(ae_loss,loss = torch.nn.MSELoss())
-     
-  
+
+
     train_order = np.arange(len(molecules)).astype(int)
     molecules_sc = {}
     for m_idx in train_order:
@@ -309,8 +309,8 @@ if __name__ == '__main__':
             if not idx in molecules[molecule]: continue
             mol_sc = atoms[idx].info.get('sc',True)
         molecules_sc[molecule] = mol_sc
-        
-            
+
+
     chkpt_idx = 0
     validate_every = 10
 
@@ -383,7 +383,7 @@ if __name__ == '__main__':
                             losses = {}
                         losses_eval = {key: losses[key][0](results)/a_count[idx] for key in losses}
                         running_losses.update({key:running_losses[key] + losses_eval[key].item() for key in losses})
-                        
+
                         if reaction == 2:
                             ref_dict['AB'] = e_ref
                             pred_dict['AB'] = results['E'][-1:]
@@ -398,13 +398,13 @@ if __name__ == '__main__':
                                 label = 'A' if not 'A' in ref_dict else 'B'
                                 ref_dict[label] = e_ref
                                 pred_dict[label] = results['E'][-1:]
-                                
+
                         elif len(atoms[idx].positions) > 1:
                             ref_dict[''.join(atoms[idx].get_chemical_symbols())] = e_ref
                             if sc:
                                 steps = skip_steps
                             else:
-                                steps = -1    
+                                steps = -1
                             pred_dict[''.join(atoms[idx].get_chemical_symbols())] = results['E'][steps:]
                         else:
                             ref_dict[''.join(atoms[idx].get_chemical_symbols())] = torch.zeros_like(e_ref)
