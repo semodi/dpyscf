@@ -9,10 +9,10 @@ kcalpmol = kcal/mol
 
 
 
-def test_bh(xc, nxc='nxc', indices= []):
-    with open('../data/bh_76_instructions.json','r') as file:
+def test_bh(xc, nxc='nxc', indices= [], ref_dir='../'):
+    with open(ref_dir+'../data/bh_76_instructions.json','r') as file:
         instructions = json.load(file)
-    with open('../data/bh_76_dict.json','r') as file:
+    with open(ref_dir +'../data/bh_76_dict.json','r') as file:
         xyz_dict = json.load(file)
 
     basis = '6-311++G(3df,2pd)'
@@ -24,7 +24,7 @@ def test_bh(xc, nxc='nxc', indices= []):
         geometries = inst['setup']['reaction_geometries']
         xyz_data = {}
         for geom in geometries:
-            xyz_data[geom] = read('../data/xyz/' + xyz_dict[geom[2:]],':')
+            xyz_data[geom] = read(ref_dir + '../data/xyz/' + xyz_dict[geom[2:]],':')
 
 
         reference_heights.append(inst['reference_value'])
@@ -59,7 +59,7 @@ def test_bh(xc, nxc='nxc', indices= []):
                 mf = method(mol)
                 mf.xc = xc
 
-            mf.grids.level=5
+            mf.grids.level=9
             mf.kernel()
             energies.append(mf.e_tot)
         barrier_heights.append(Hartree/kcalpmol*(energies[-1] - np.sum(energies[:-1])))

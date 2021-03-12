@@ -83,8 +83,11 @@ for a in atoms:
     elif sys.argv[2] == 'xc':
         mf = method(mol)
         mf.xc = sys.argv[1]
-
-    mf.grids.level=7
+    
+    if len(sys.argv) > 3:
+        mf.grids.level= int(sys.argv[3])
+    else:
+        mf.grids.level = 9
 #     mf.grids.level=1
     mf.kernel()
     dm = mf.make_rdm1()
