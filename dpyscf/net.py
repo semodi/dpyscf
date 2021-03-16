@@ -262,7 +262,10 @@ class XC(torch.nn.Module):
             return torch.sqrt(gamma)/(2*(3*np.pi**2)**(1/3)*rho**(4/3)+self.epsilon)
 
         def l_3(rho, gamma, tau):
-            return torch.nn.functional.relu((tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon))
+            tw = gamma/(8*rho+self.epsilon)
+            return torch.nn.functional.relu((tau - tw)/(uniform_factor*rho**(5/3)+tw*1e-3))
+            # print('hello')
+            # return (tau - tw)/(uniform_factor*rho**(5/3)+tw*1e-3)
 
         def l_4(rho, nl):
             return nl/((rho.unsqueeze(-1)**(1/3))*self.nl_ueg + self.epsilon)
@@ -305,12 +308,12 @@ class XC(torch.nn.Module):
                 # descr4b = (2*tau_b - 4*gamma_b/(16*(rho0_b+self.epsilon)))/(uniform_factor*(2*rho0_b)**(5/3)+self.epsilon)
                 descr4b = l_3(2*rho0_b, 4*gamma_b, 2*tau_b)
                 descr4 = torch.cat([descr4a.unsqueeze(-1), descr4b.unsqueeze(-1)],dim=-1)
-                descr4 = descr4**3/(descr4**2+self.epsilon)
+                # descr4 = descr4**3/(descr4**2+self.epsilon)
             else:
                 # descr4 = (tau_a + tau_b - (gamma_a + gamma_b+2*gamma_ab)/(8*(rho0_a + rho0_b + self.epsilon)))/(self.epsilon+(rho0_a + rho0_b)**(5/3)*((1+zeta)**(5/3) + (1-zeta)**(5/3))) # tau
                 descr4 = l_3(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab, tau_a + tau_b)
                 descr4 = 2*descr4/((1+zeta)**(5/3) + (1-zeta)**(5/3))
-                descr4 = descr4**3/(descr4**2+self.epsilon)
+                # descr4 = descr4**3/(descr4**2+self.epsilon)
                 descr4 = descr4.unsqueeze(-1)
             descr4 = torch.log((descr4 + 1)/2)
             # descr4 = torch.log(descr4 + self.loge)
@@ -533,18 +536,19 @@ class C_L(torch.nn.Module):
                 torch.nn.Linear(n_hidden, n_hidden),
                 torch.nn.GELU(),
                 torch.nn.Linear(n_hidden, 1),
-                torch.nn.Softplus()
+                # torch.nn.Softplus()
             ).to(device)
         self.sig = torch.nn.Sigmoid()
         self.tanh = torch.nn.Tanh()
         self.lobf = LOB(2.0)
+
     def forward(self, rho, **kwargs):
 
         # squeezed = -self.net(rho[...,self.use]).squeeze()*self.gate(rho).squeeze()
         squeezed = -self.net(rho).squeeze()
         if self.ueg_limit:
-            # ueg_lim = rho[...,self.use[0]]
-            ueg_lim = self.tanh(rho[...,self.use[0]])
+            ueg_lim = rho[...,self.use[0]]
+            # ueg_lim = self.tanh(rho[...,self.use[0]])
             if len(self.use) > 1:
                 ueg_lim_a = torch.pow(self.tanh(rho[...,self.use[1]]),2)
             else:
@@ -555,6 +559,7 @@ class C_L(torch.nn.Module):
                 ueg_lim_nl = 0
 
             return -self.lobf(-squeezed*(ueg_lim + ueg_lim_a + ueg_lim_nl))
+            # return squeezed*(ueg_lim + ueg_lim_a + ueg_lim_nl)
 
         else:
             return -self.lobf(-squeezed)
