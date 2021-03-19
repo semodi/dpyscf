@@ -11,8 +11,8 @@ from ase import Atoms
 from ase.io import read
 from .torch_routines import *
 from opt_einsum import contract
-# omega_const = {0.3: 100*np.pi/3, 1:np.pi, 5: np.pi/25, 0:3*(3/np.pi)**(1/3)}
-omega_const = {}
+omega_const = {0.3: 100*np.pi/3, 1:np.pi, 5: np.pi/25, 0:3*(3/np.pi)**(1/3)}
+# omega_const = {}
 def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=False, ueg_limit=True, meta_x=None, freec=False):
     print('FREEC', freec)
     if xctype == 'GGA':
@@ -263,12 +263,14 @@ class XC(torch.nn.Module):
 
         def l_3(rho, gamma, tau):
             tw = gamma/(8*rho+self.epsilon)
-            return torch.nn.functional.relu((tau - tw)/(uniform_factor*rho**(5/3)+tw*1e-3))
-            # print('hello')
-            # return (tau - tw)/(uniform_factor*rho**(5/3)+tw*1e-3)
+            return torch.nn.functional.relu((tau - tw)/(uniform_factor*rho**(5/3)+tw*1e-3 + 1e-12))
 
         def l_4(rho, nl):
-            return nl/((rho.unsqueeze(-1)**(1/3))*self.nl_ueg + self.epsilon)
+            # print(nl.size())
+            # print(self.nl_ueg.size())
+            u = nl[:,:1]/((rho.unsqueeze(-1)**(1/3))*self.nl_ueg[:,:1] + self.epsilon)
+            wu = nl[:,1:]/((rho.unsqueeze(-1))*self.nl_ueg[:,1:] + self.epsilon)
+            return torch.nn.functional.relu(torch.cat([u,wu],dim=-1))
 
 
         if not spin_scaling:
@@ -518,7 +520,7 @@ class NXC(torch.nn.Module):
         return self.ml_net(coeff)
 
 class C_L(torch.nn.Module):
-    def __init__(self, n_input=2,n_hidden=16, device='cpu', use=[], ueg_limit=False):
+    def __init__(self, n_input=2,n_hidden=16, device='cpu', use=[], ueg_limit=False, one_e=False):
         super().__init__()
         self.spin_scaling = False
         self.lob = False
@@ -541,6 +543,8 @@ class C_L(torch.nn.Module):
         self.sig = torch.nn.Sigmoid()
         self.tanh = torch.nn.Tanh()
         self.lobf = LOB(2.0)
+        self.one_e = one_e
+        self.full_pol = np.log(0.5*2**(4/3))
 
     def forward(self, rho, **kwargs):
 
@@ -553,16 +557,16 @@ class C_L(torch.nn.Module):
                 ueg_lim_a = torch.pow(self.tanh(rho[...,self.use[1]]),2)
             else:
                 ueg_lim_a = 0
-            if len(self.use) > 3:
-                ueg_lim_nl = torch.sum(rho[...,self.use[2:]],dim=-1)
+            if len(self.use) > 2:
+                ueg_lim_nl = torch.sum(rho[...,self.use[2:]]**2,dim=-1)
             else:
                 ueg_lim_nl = 0
 
-            return -self.lobf(-squeezed*(ueg_lim + ueg_lim_a + ueg_lim_nl))
-            # return squeezed*(ueg_lim + ueg_lim_a + ueg_lim_nl)
-
+            ueg_factor = ueg_lim + ueg_lim_a + ueg_lim_nl
         else:
-            return -self.lobf(-squeezed)
+            ueg_factor = 1
+
+        return -self.lobf(-squeezed*ueg_factor)
 
 class XC_L_POL(torch.nn.Module):
 
@@ -745,10 +749,11 @@ class XC_L(torch.nn.Module):
         else:
             result = squeezed*(ueg_lim + ueg_lim_a + ueg_lim_nl)
         if self.one_e:
-            alpha=rho[...,self.use[1]]
-            u = rho[...,self.use[2]]
+            alpha= torch.exp(rho[...,self.use[1]])*2-1
+            u = torch.exp(rho[...,self.use[2]])
+            switch = torch.exp(-0.1*alpha*u)
 #             result = (alpha - np.log(1/2))*result + torch.exp(-self.one_e_decay*(alpha - np.log(1/2)))*(torch.exp(u)-1)
-            result = (alpha - np.log(1/2))*result + torch.exp(-0.01*(alpha - np.log(1/2)))*(torch.exp(u)-1)
+            result = (1-switch)*result + switch*(u-1)
 
         return result
 
