@@ -329,9 +329,10 @@ class XC(torch.nn.Module):
                 descr5 = descr5.view(descr5.size()[0],-1)
 #                 print(torch.max(descr5))
             else:
-                zeta_nl = (lapl_a - lapl_b)/(lapl_a + lapl_b + self.epsilon)
-                spinscale_nl = 0.5*((1+zeta_nl)**(4/3) + (1-zeta_nl)**(4/3)) # zeta
-                descr5 = torch.log(l_4(rho0_a+rho0_b,lapl_a+lapl_b)/spinscale_nl + self.loge)
+                descr5_p= torch.log(l_4(rho0_a + rho0_b, lapl_a + lapl_b) + self.loge)
+                descr5_m = torch.log(l_4(rho0_a + rho0_b, lapl_a - lapl_b)**2 + 1)
+                descr5 = torch.cat([descr5_p, descr5_m], dim = -1)
+
             descr = torch.cat([descr, descr5],dim=-1)
         if spin_scaling:
             descr = descr.view(descr.size()[0],-1,2).permute(2,0,1)
@@ -558,7 +559,7 @@ class C_L(torch.nn.Module):
             else:
                 ueg_lim_a = 0
             if len(self.use) > 2:
-                ueg_lim_nl = torch.sum(rho[...,self.use[2:]]**2,dim=-1)
+                ueg_lim_nl = torch.sum(self.tanh(rho[...,self.use[2:]])**2,dim=-1)
             else:
                 ueg_lim_nl = 0
 
