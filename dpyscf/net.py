@@ -329,9 +329,9 @@ class XC(torch.nn.Module):
                 descr5 = descr5.view(descr5.size()[0],-1)
 #                 print(torch.max(descr5))
             else:
-                descr5_p= torch.log(l_4(rho0_a + rho0_b, lapl_a + lapl_b) + self.loge)
-                descr5_m = torch.log(l_4(rho0_a + rho0_b, lapl_a - lapl_b)**2 + 1)
-                descr5 = torch.cat([descr5_p, descr5_m], dim = -1)
+                descr5= torch.log(l_4(rho0_a + rho0_b, lapl_a + lapl_b) + self.loge)
+                # descr5_m = torch.log(l_4(rho0_a + rho0_b, lapl_a - lapl_b)**2 + 1)
+                # descr5 = torch.cat([descr5_p, descr5_m], dim = -1)
 
             descr = torch.cat([descr, descr5],dim=-1)
         if spin_scaling:
