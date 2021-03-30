@@ -13,16 +13,17 @@ from .torch_routines import *
 from opt_einsum import contract
 omega_const = {0.3: 100*np.pi/3, 1:np.pi, 5: np.pi/25, 0:3*(3/np.pi)**(1/3)}
 # omega_const = {}
-def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=False, ueg_limit=True, meta_x=None, freec=False):
+def get_scf(xctype, pretrain_loc, hyb_par=0,n_hidden=16, path='', DEVICE='cpu', polynomial=False, ueg_limit=True, meta_x=None, freec=False):
     print('FREEC', freec)
+    omega = []
     if xctype == 'GGA':
         lob = 1.804 if ueg_limit else 0
         if polynomial:
             x = XC_L_POL(device=DEVICE, max_order=3, use=[1], lob=lob, ueg_limit=ueg_limit)
             c = C_L_POL(device=DEVICE, max_order=4,  use=[0, 1, 2, 3], ueg_limit=ueg_limit and not freec)
         else:
-            x = XC_L(device=DEVICE,n_input=1, n_hidden=16, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
-            c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit and not freec)
+            x = XC_L(device=DEVICE,n_input=1, n_hidden=n_hidden, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
+            c = C_L(device=DEVICE,n_input=3, n_hidden=n_hidden, use=[2], ueg_limit=ueg_limit and not freec)
         xc_level = 2
     elif xctype == 'MGGA':
         lob = 1.174 if ueg_limit else 0
@@ -30,15 +31,16 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=F
             x = XC_L_POL(device=DEVICE, max_order=4, use=[1, 2], lob=0, ueg_limit=ueg_limit, sdecay=True)
             c = C_L_POL(device=DEVICE, max_order=3,  use=[0, 1, 2, 3, 4, 5], ueg_limit=ueg_limit)
         else:
-            x = XC_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=1.174, ueg_limit=ueg_limit) # PBE_X
-            c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit and not freec)
+            x = XC_L(device=DEVICE,n_input=2, n_hidden=n_hidden, use=[1,2], lob=1.174, ueg_limit=ueg_limit) # PBE_X
+            c = C_L(device=DEVICE,n_input=4, n_hidden=n_hidden, use=[2,3], ueg_limit=ueg_limit and not freec)
         xc_level = 3
     elif xctype == 'MGGA_NL':
         ueg_limit = False
         lob = 1.174 if ueg_limit else 0
-        x = XC_L(device=DEVICE,n_input=3, n_hidden=16, use=[1,2,3], lob=1.174, ueg_limit=ueg_limit) # PBE_X
-        c = C_L(device=DEVICE,n_input=5, n_hidden=16, use=[2,3,4], ueg_limit=ueg_limit and not freec)
+        x = XC_L(device=DEVICE,n_input=3, n_hidden=32, use=[1,2,3], lob=False, ueg_limit=True) # PBE_X
+        c = C_L(device=DEVICE,n_input=7, n_hidden=32, use=[2,3,5,6], ueg_limit=True, lob=False)
         xc_level = 4
+        omega= [0,0.3,5]
 
     if pretrain_loc is not None:
         print("Loading pre-trained models from " + pretrain_loc)
@@ -71,7 +73,7 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', polynomial=F
             xc.exx_a.requires_grad=True
             print(xc.exx_a)
     else:
-        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, meta_x=meta_x)
+        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, meta_x=meta_x,omega=omega)
         scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
         if path:
             xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
@@ -299,7 +301,7 @@ class XC(torch.nn.Module):
             else:
                 # descr3 = torch.sqrt(gamma_a + gamma_b + 2*gamma_ab)/(2*(3*np.pi**2)**(1/3)*(rho0_a + rho0_b)**(4/3)+self.epsilon) # s
                 descr3 = l_2(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab) # s
-                descr3 = descr3/((1+zeta)**(2/3) + (1-zeta)**2/3)
+                # descr3 = descr3/((1+zeta)**(2/3) + (1-zeta)**2/3)
                 descr3 = descr3.unsqueeze(-1)
                 descr3 = (1-torch.exp(-descr3**2/self.s_gam))*torch.log(descr3 + 1)
             descr = torch.cat([descr, descr3],dim=-1)
@@ -314,7 +316,7 @@ class XC(torch.nn.Module):
             else:
                 # descr4 = (tau_a + tau_b - (gamma_a + gamma_b+2*gamma_ab)/(8*(rho0_a + rho0_b + self.epsilon)))/(self.epsilon+(rho0_a + rho0_b)**(5/3)*((1+zeta)**(5/3) + (1-zeta)**(5/3))) # tau
                 descr4 = l_3(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab, tau_a + tau_b)
-                descr4 = 2*descr4/((1+zeta)**(5/3) + (1-zeta)**(5/3))
+                # descr4 = 2*descr4/((1+zeta)**(5/3) + (1-zeta)**(5/3))
                 # descr4 = descr4**3/(descr4**2+self.epsilon)
                 descr4 = descr4.unsqueeze(-1)
             descr4 = torch.log((descr4 + 1)/2)
@@ -521,7 +523,7 @@ class NXC(torch.nn.Module):
         return self.ml_net(coeff)
 
 class C_L(torch.nn.Module):
-    def __init__(self, n_input=2,n_hidden=16, device='cpu', use=[], ueg_limit=False, one_e=False):
+    def __init__(self, n_input=2,n_hidden=16, device='cpu', use=[], ueg_limit=False, one_e=False, lob=2.0):
         super().__init__()
         self.spin_scaling = False
         self.lob = False
@@ -543,7 +545,13 @@ class C_L(torch.nn.Module):
             ).to(device)
         self.sig = torch.nn.Sigmoid()
         self.tanh = torch.nn.Tanh()
-        self.lobf = LOB(2.0)
+        self.lob = lob
+        if self.lob:
+            self.lobf = LOB(self.lob)
+        else:
+            self.lob =  1000.0
+            self.lobf = LOB(self.lob)
+
         self.one_e = one_e
         self.full_pol = np.log(0.5*2**(4/3))
 
@@ -567,7 +575,10 @@ class C_L(torch.nn.Module):
         else:
             ueg_factor = 1
 
-        return -self.lobf(-squeezed*ueg_factor)
+        if self.lob:
+            return self.lobf(squeezed*ueg_factor)
+        else:
+            return squeezed*ueg_factor
 
 class XC_L_POL(torch.nn.Module):
 
